@@ -1,0 +1,1637 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import { createClient } from '@supabase/supabase-js';
+import { DepartmentCode, SoulStatus, UserRole } from '@prisma/client';
+import { prisma } from './lib/prisma';
+import {
+  requireTenantAuth,
+  resolveTargetTenantId,
+  signAuthToken,
+  TenantRequest,
+} from './middleware/tenantAuth';
+
+dotenv.config();
+
+const app = express();
+app.use(
+  cors({
+    origin: process.env.FRONTEND_ORIGIN || '*',
+    credentials: true,
+  })
+);
+app.use(express.json());
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myntqhkgeyxkmxypezvu.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const APP_URL = (process.env.APP_URL || process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
+const SUPPORT_WHATSAPP = process.env.SUPPORT_WHATSAPP || '';
+
+const supabase = SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+  : null;
+
+export interface PastorInviteResult {
+  sent: boolean;
+  status: 'INVITE_SENT' | 'MAGIC_LINK_SENT' | 'MISSING_SERVICE_KEY' | 'FAILED';
+  recipientEmail: string;
+  message: string;
+}
+
+async function sendPastorVerificationInvite(params: {
+  pastorName: string;
+  pastorEmail: string;
+  churchName: string;
+  tenantId: string;
+  trialEndsAt: Date;
+}): Promise<PastorInviteResult> {
+  const recipientEmail = params.pastorEmail.trim().toLowerCase();
+  if (!supabaseAdmin) {
+    return {
+      sent: false,
+      status: 'MISSING_SERVICE_KEY',
+      recipientEmail,
+      message:
+        'SUPABASE_SERVICE_ROLE_KEY is not set in backend/.env yet. Add your Supabase service_role key to send verification emails.',
+    };
+  }
+
+  const trialEndsFormatted = params.trialEndsAt.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+
+  const redirectTo = `${APP_URL}/login`;
+  const metadata: Record<string, string> = {
+    full_name: params.pastorName.trim(),
+    church_name: params.churchName.trim(),
+    trial_ends: trialEndsFormatted,
+    tenant_id: params.tenantId,
+    role: 'ADMIN',
+  };
+  if (SUPPORT_WHATSAPP.trim()) {
+    metadata.support_whatsapp = SUPPORT_WHATSAPP.trim();
+  }
+
+  const { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+    redirectTo,
+    data: metadata,
+  });
+
+  if (!inviteErr) {
+    return {
+      sent: true,
+      status: 'INVITE_SENT',
+      recipientEmail,
+      message: `Verification & welcome link sent to ${recipientEmail}.`,
+    };
+  }
+
+  // If the pastor already exists in Supabase auth.users, send an OTP / sign-in verification link instead
+  if (/already|registered|exists/i.test(inviteErr.message)) {
+    const authClient = supabase || supabaseAdmin;
+    const { error: otpErr } = await authClient.auth.signInWithOtp({
+      email: recipientEmail,
+      options: {
+        emailRedirectTo: redirectTo,
+        data: metadata,
+      },
+    });
+    if (!otpErr) {
+      return {
+        sent: true,
+        status: 'MAGIC_LINK_SENT',
+        recipientEmail,
+        message: `${recipientEmail} is already verified in Supabase Auth — sent a fresh sign-in link.`,
+      };
+    }
+    return {
+      sent: false,
+      status: 'FAILED',
+      recipientEmail,
+      message: otpErr.message,
+    };
+  }
+
+  return {
+    sent: false,
+    status: 'FAILED',
+    recipientEmail,
+    message: inviteErr.message,
+  };
+}
+
+const CORE_DEPARTMENTS: { code: DepartmentCode; name: string; description: string }[] = [
+  {
+    code: 'ADMIN',
+    name: 'Administration',
+    description: 'Overall church oversight, attendance %, budgets, finance & serving members',
+  },
+  {
+    code: 'FINANCE',
+    name: 'Finance Department',
+    description: 'Per-service Offertory, Tithe, Partner-linked Partnership & payouts',
+  },
+  {
+    code: 'BACENTA',
+    name: 'Bacenta Ministry',
+    description: 'Micro-church home fellowships, outreach reports, attendance & meeting offerings',
+  },
+  {
+    code: 'AIRPORT_STARS',
+    name: 'Airport Stars',
+    description: 'Service creation, rapid member check-in & first-timer registration',
+  },
+  {
+    code: 'TELE_PASTORING',
+    name: 'Tele Pastoring',
+    description: '3-missed-services retention, physical/phone reachouts & 4-week soul care',
+  },
+  {
+    code: 'CHILDRENS_CHURCH',
+    name: "Children's Church",
+    description: 'Service check-in, child salvations & 3-missed-services guardian follow-up',
+  },
+  {
+    code: 'CAMPUSES',
+    name: 'Campuses Ministry',
+    description: 'University & school campus fellowships, outreach reports & offerings',
+  },
+];
+
+// ─── 1. HEALTH CHECK (PRISMA <-> SUPABASE POSTGRESQL) ─────────────────────────
+
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'ok',
+      orm: 'Prisma',
+      database: 'Supabase PostgreSQL Connected',
+    });
+  } catch (err: unknown) {
+    res.status(503).json({
+      status: 'degraded',
+      orm: 'Prisma',
+      error: err instanceof Error ? err.message : 'Database connection failed',
+    });
+  }
+});
+
+// ─── 2. AUTHENTICATION (BACKEND-ONLY JWT + PRISMA + SUPABASE GOOGLE OAUTH) ───
+
+// Verify Supabase-issued JWT via /auth/v1/user (if API key present) or Supabase public JWKS (ES256)
+async function verifySupabaseAccessToken(accessToken: string): Promise<{
+  email: string;
+  avatarUrl: string;
+  fullName: string;
+} | null> {
+  const apiKey = SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY;
+  if (apiKey) {
+    try {
+      const sbRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          apikey: apiKey,
+        },
+      });
+      if (sbRes.ok) {
+        const sbUser = (await sbRes.json()) as {
+          email?: string;
+          user_metadata?: { full_name?: string; avatar_url?: string };
+        };
+        if (sbUser.email) {
+          return {
+            email: sbUser.email,
+            avatarUrl: sbUser.user_metadata?.avatar_url || '',
+            fullName: sbUser.user_metadata?.full_name || '',
+          };
+        }
+      }
+    } catch {
+      // Fall through to cryptographic JWKS verification
+    }
+  }
+
+  // Cryptographic verification against Supabase Auth's public JWKS endpoint (works without SUPABASE_ANON_KEY)
+  const decodedHeader = jwt.decode(accessToken, { complete: true }) as {
+    header?: { kid?: string; alg?: string };
+  } | null;
+  if (!decodedHeader?.header) return null;
+
+  const jwksRes = await fetch(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`);
+  if (!jwksRes.ok) return null;
+
+  const jwks = (await jwksRes.json()) as { keys?: (crypto.JsonWebKey & { kid?: string })[] };
+  const matchingJwk =
+    jwks.keys?.find((k) => !decodedHeader.header?.kid || k.kid === decodedHeader.header.kid) ||
+    jwks.keys?.[0];
+  if (!matchingJwk) return null;
+
+  const publicKey = crypto.createPublicKey({ key: matchingJwk, format: 'jwk' });
+  const verifiedPayload = jwt.verify(accessToken, publicKey, {
+    algorithms: ['ES256', 'RS256'],
+    issuer: `${SUPABASE_URL}/auth/v1`,
+  }) as {
+    email?: string;
+    user_metadata?: { full_name?: string; avatar_url?: string; picture?: string; name?: string };
+  };
+
+  if (!verifiedPayload?.email) return null;
+  return {
+    email: verifiedPayload.email,
+    avatarUrl:
+      verifiedPayload.user_metadata?.avatar_url ||
+      verifiedPayload.user_metadata?.picture ||
+      '',
+    fullName:
+      verifiedPayload.user_metadata?.full_name ||
+      verifiedPayload.user_metadata?.name ||
+      '',
+  };
+}
+
+// Retrieve Supabase-hosted Google OAuth initiation URL
+app.get('/api/auth/supabase/google-url', async (req, res) => {
+  const origin = req.headers.origin || process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+  const redirectUrl = `${origin}/login`;
+  const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&prompt=select_account`;
+
+  try {
+    const probe = await fetch(url, { method: 'GET', redirect: 'manual' });
+    if (probe.status >= 400) {
+      let detail = '';
+      try {
+        const errBody = (await probe.json()) as { msg?: string; message?: string };
+        detail = errBody.msg || errBody.message || '';
+      } catch {
+        // ignore
+      }
+      if (/not enabled/i.test(detail)) {
+        res.status(400).json({
+          error:
+            'Google provider is not enabled yet in Supabase. In your Supabase Dashboard, open Authentication → Sign In / Providers → Google, toggle ON "Enable Sign in with Google", paste your Google Client ID & Secret, and click Save.',
+        });
+        return;
+      }
+      res.status(400).json({
+        error: detail || `Supabase Google OAuth returned HTTP ${probe.status}`,
+      });
+      return;
+    }
+  } catch {
+    // Network hiccup on server probe — still return URL so browser can navigate
+  }
+
+  res.json({ url });
+});
+
+// Exchange Supabase Auth access token or email invite token_hash for church session
+app.post('/api/auth/supabase/callback', async (req, res) => {
+  try {
+    const { accessToken, tokenHash, type } = req.body as {
+      accessToken?: string;
+      tokenHash?: string;
+      type?: 'invite' | 'magiclink' | 'signup' | 'email';
+    };
+
+    let sbEmail = '';
+    let sbAvatarUrl = '';
+
+    if (tokenHash) {
+      const authClient = supabase || supabaseAdmin;
+      if (!authClient) {
+        res.status(500).json({
+          error: 'Supabase API keys are not configured in backend/.env yet.',
+        });
+        return;
+      }
+      const { data, error } = await authClient.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: type || 'invite',
+      });
+      if (error || !data?.user?.email) {
+        res.status(401).json({
+          error: error?.message || 'Verification link is invalid or has expired.',
+        });
+        return;
+      }
+      sbEmail = data.user.email;
+      sbAvatarUrl = data.user.user_metadata?.avatar_url || '';
+    } else if (accessToken) {
+      const verified = await verifySupabaseAccessToken(accessToken);
+      if (!verified) {
+        res.status(401).json({ error: 'Invalid or expired Supabase authentication token' });
+        return;
+      }
+      sbEmail = verified.email;
+      sbAvatarUrl = verified.avatarUrl;
+    } else {
+      res.status(400).json({ error: 'Supabase access token or verification token_hash is required' });
+      return;
+    }
+
+    const verifiedEmail = sbEmail.toLowerCase();
+    const user = await prisma.user.findUnique({
+      where: { email: verifiedEmail },
+      include: { tenant: true },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(404).json({
+        error: `Account (${verifiedEmail}) was verified via Supabase, but is not registered in Open Church.`,
+        email: verifiedEmail,
+      });
+      return;
+    }
+
+    if (user.tenant && user.tenant.status === 'SUSPENDED') {
+      res.status(403).json({ error: 'This church tenant is currently suspended' });
+      return;
+    }
+
+    const departments = user.tenantId
+      ? await prisma.department.findMany({ where: { tenantId: user.tenantId } })
+      : [];
+
+    const token = signAuthToken({
+      sub: user.id,
+      tenantId: user.tenantId,
+      role: user.role,
+      email: user.email,
+    });
+
+    const { passwordHash: _pw, tenant, ...safeUser } = user;
+    void _pw;
+
+    res.json({
+      token,
+      user: safeUser,
+      tenant,
+      departments,
+      googlePicture: sbAvatarUrl,
+      supabaseLinked: true,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Supabase authentication failed',
+    });
+  }
+});
+
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { credential, email } = req.body as { credential?: string; email?: string };
+    let verifiedEmail = email?.trim().toLowerCase();
+    let googleProfileName = '';
+    let googleProfilePicture = '';
+
+    if (credential) {
+      // 1. If Supabase is configured with an anon key, link credential into Supabase Auth
+      if (supabase) {
+        try {
+          const { data: sbData, error: sbErr } = await supabase.auth.signInWithIdToken({
+            provider: 'google',
+            token: credential,
+          });
+          if (!sbErr && sbData?.user?.email) {
+            verifiedEmail = sbData.user.email.toLowerCase();
+            googleProfileName = sbData.user.user_metadata?.full_name || '';
+            googleProfilePicture = sbData.user.user_metadata?.avatar_url || '';
+          }
+        } catch (sbErr) {
+          console.warn('Supabase ID token notice:', sbErr);
+        }
+      }
+
+      // 2. Fallback / direct Google Identity verification
+      if (!verifiedEmail) {
+        const googleRes = await fetch(
+          `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+        );
+        if (!googleRes.ok) {
+          res.status(401).json({ error: 'Invalid Google authentication token' });
+          return;
+        }
+        const tokenInfo = (await googleRes.json()) as {
+          email?: string;
+          email_verified?: string | boolean;
+          name?: string;
+          picture?: string;
+          aud?: string;
+        };
+
+        if (!tokenInfo.email || (tokenInfo.email_verified !== 'true' && tokenInfo.email_verified !== true)) {
+          res.status(401).json({ error: 'Google email address is not verified' });
+          return;
+        }
+
+        const expectedClientId = process.env.GOOGLE_CLIENT_ID;
+        if (expectedClientId && tokenInfo.aud !== expectedClientId) {
+          res.status(401).json({ error: 'Google token audience mismatch' });
+          return;
+        }
+
+        verifiedEmail = tokenInfo.email.toLowerCase();
+        googleProfileName = tokenInfo.name || '';
+        googleProfilePicture = tokenInfo.picture || '';
+      }
+    }
+
+    if (!verifiedEmail) {
+      res.status(400).json({ error: 'No Google email was provided or resolved' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: verifiedEmail },
+      include: { tenant: true },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(404).json({
+        error: `No Open Church account is linked to Google account (${verifiedEmail}). Ask your church administrator to assign your department role.`,
+        email: verifiedEmail,
+        googleName: googleProfileName,
+      });
+      return;
+    }
+
+    if (user.tenant && user.tenant.status === 'SUSPENDED') {
+      res.status(403).json({ error: 'This church tenant is currently suspended' });
+      return;
+    }
+
+    const departments = user.tenantId
+      ? await prisma.department.findMany({ where: { tenantId: user.tenantId } })
+      : [];
+
+    const token = signAuthToken({
+      sub: user.id,
+      tenantId: user.tenantId,
+      role: user.role,
+      email: user.email,
+    });
+
+    const { passwordHash: _pw, tenant, ...safeUser } = user;
+    void _pw;
+
+    res.json({
+      token,
+      user: safeUser,
+      tenant,
+      departments,
+      googlePicture: googleProfilePicture,
+      supabaseLinked: true,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Google authentication failed',
+    });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email?.trim()) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+      include: { tenant: true },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+
+    if (user.tenant && user.tenant.status === 'SUSPENDED') {
+      res.status(403).json({ error: 'This church tenant is currently suspended' });
+      return;
+    }
+
+    // Validate password if supplied; allow dev/prototype quick login if password omitted
+    const validPassword = password
+      ? await bcrypt.compare(password, user.passwordHash)
+      : process.env.NODE_ENV !== 'production';
+    if (!validPassword) {
+      res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+
+    const token = signAuthToken({
+      sub: user.id,
+      tenantId: user.tenantId,
+      role: user.role,
+      email: user.email,
+    });
+
+    const { passwordHash: _pw, tenant, ...safeUser } = user;
+    void _pw;
+
+    res.json({
+      token,
+      user: safeUser,
+      tenant,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Authentication failed',
+    });
+  }
+});
+
+// ─── 3. MULTI-TENANT BOOTSTRAP SNAPSHOT ───────────────────────────────────────
+
+app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => {
+  try {
+    const isPlatform = req.userRole === 'PLATFORM_ADMIN';
+    const tenantFilter = isPlatform
+      ? req.query.tenantId
+        ? { tenantId: String(req.query.tenantId) }
+        : {}
+      : { tenantId: req.tenantId! };
+
+    const [
+      tenants,
+      departments,
+      users,
+      members,
+      children,
+      servingMembers,
+      services,
+      serviceAttendance,
+      childAttendance,
+      partners,
+      deptContributions,
+      workplansRaw,
+      requisitionsRaw,
+      financeTransactions,
+      fellowshipUnits,
+      fellowshipMeetings,
+      fellowshipMeetingAttendance,
+      fellowshipOutreaches,
+      teleReachouts,
+      absenteeFollowups,
+      soulsWon,
+      soulFollowupWeeks,
+    ] = await Promise.all([
+      isPlatform
+        ? prisma.tenant.findMany({ orderBy: { name: 'asc' } })
+        : prisma.tenant.findMany({ where: { id: req.tenantId! } }),
+      prisma.department.findMany({ where: tenantFilter }),
+      prisma.user.findMany({
+        where: isPlatform ? {} : { tenantId: req.tenantId! },
+        select: {
+          id: true,
+          tenantId: true,
+          fullName: true,
+          email: true,
+          phoneNumber: true,
+          role: true,
+          departmentId: true,
+          fellowshipUnitId: true,
+          isActive: true,
+          createdAt: true,
+        },
+      }),
+      prisma.member.findMany({ where: tenantFilter }),
+      prisma.child.findMany({ where: tenantFilter }),
+      prisma.servingMember.findMany({ where: tenantFilter }),
+      prisma.service.findMany({ where: tenantFilter, orderBy: { serviceDate: 'desc' } }),
+      prisma.serviceAttendance.findMany({ where: tenantFilter }),
+      prisma.childAttendance.findMany({ where: tenantFilter }),
+      prisma.partner.findMany({ where: tenantFilter }),
+      prisma.deptContribution.findMany({ where: tenantFilter }),
+      prisma.workplan.findMany({ where: tenantFilter, include: { items: true } }),
+      prisma.requisition.findMany({ where: tenantFilter }),
+      prisma.financeTransaction.findMany({ where: tenantFilter }),
+      prisma.fellowshipUnit.findMany({ where: tenantFilter }),
+      prisma.fellowshipMeeting.findMany({ where: tenantFilter }),
+      prisma.fellowshipMeetingAttendance.findMany({ where: tenantFilter }),
+      prisma.fellowshipOutreach.findMany({ where: tenantFilter }),
+      prisma.teleReachout.findMany({ where: tenantFilter }),
+      prisma.absenteeFollowup.findMany({ where: tenantFilter }),
+      prisma.soulWon.findMany({ where: tenantFilter }),
+      prisma.soulFollowupWeek.findMany({ where: tenantFilter }),
+    ]);
+
+    const requisitions = requisitionsRaw.map((r) => ({
+      ...r,
+      items: Array.isArray(r.itemsJson) ? r.itemsJson : [],
+    }));
+
+    res.json({
+      tenants,
+      departments,
+      users,
+      members,
+      children,
+      servingMembers,
+      services,
+      serviceAttendance,
+      childAttendance,
+      partners,
+      deptContributions,
+      workplans: workplansRaw,
+      requisitions,
+      financeTransactions,
+      fellowshipUnits,
+      fellowshipMeetings,
+      fellowshipMeetingAttendance,
+      fellowshipOutreaches,
+      teleReachouts,
+      absenteeFollowups,
+      soulsWon,
+      soulFollowupWeeks,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed loading tenant bootstrap data',
+    });
+  }
+});
+
+// ─── 4. PLATFORM COUNCIL: TENANT PROVISIONING ─────────────────────────────────
+
+const HOD_ROLE_BY_DEPT: Partial<Record<DepartmentCode, UserRole>> = {
+  ADMIN: 'ADMIN',
+  FINANCE: 'FINANCE_HOD',
+  BACENTA: 'BACENTA_HOD',
+  AIRPORT_STARS: 'AIRPORT_HOD',
+  TELE_PASTORING: 'TELE_HOD',
+  CHILDRENS_CHURCH: 'CHILDREN_HOD',
+  CAMPUSES: 'CAMPUS_HOD',
+};
+
+app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, res) => {
+  if (req.userRole !== 'PLATFORM_ADMIN') {
+    res.status(403).json({ error: 'Platform Council access required' });
+    return;
+  }
+
+  try {
+    const {
+      name,
+      slug,
+      logoUrl,
+      currency,
+      city,
+      country,
+      adminName,
+      adminEmail,
+      adminPhone,
+      adminPassword,
+      leadPastor,
+      departmentHeads,
+    } = req.body as {
+      name: string;
+      slug?: string;
+      logoUrl?: string;
+      currency?: string;
+      city?: string;
+      country?: string;
+      adminName: string;
+      adminEmail: string;
+      adminPhone?: string;
+      adminPassword?: string;
+      leadPastor?: { name: string; email: string; phone?: string } | null;
+      departmentHeads?: { code: DepartmentCode; name: string; email: string; phone?: string }[];
+    };
+
+    const passwordHash = await bcrypt.hash(adminPassword || 'openchurch123', 10);
+    const normalizedSlug = String(slug || name)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          name: String(name).trim(),
+          slug: normalizedSlug || `church-${Date.now().toString(36)}`,
+          logoUrl: logoUrl || '/logo.jpg',
+          currency: currency || 'UGX',
+          city: city || '',
+          country: country || '',
+          status: 'ACTIVE',
+          subscriptionStatus: 'TRIALING',
+          monthlyFee: 50000,
+          trialEndsAt,
+        },
+      });
+
+      await tx.department.createMany({
+        data: CORE_DEPARTMENTS.map((d) => ({
+          tenantId: tenant.id,
+          code: d.code,
+          name: d.name,
+          description: d.description,
+        })),
+      });
+
+      const departments = await tx.department.findMany({
+        where: { tenantId: tenant.id },
+      });
+
+      const adminDept = departments.find((d) => d.code === 'ADMIN')!;
+      const normalizedAdminEmail = String(adminEmail).trim().toLowerCase();
+
+      const adminUser = await tx.user.create({
+        data: {
+          tenantId: tenant.id,
+          fullName: String(adminName).trim(),
+          email: normalizedAdminEmail,
+          passwordHash,
+          phoneNumber: adminPhone || '',
+          role: 'ADMIN',
+          departmentId: adminDept.id,
+        },
+      });
+
+      const seenEmails = new Set<string>([normalizedAdminEmail]);
+      const createdUsers = [adminUser];
+
+      // Create separate Lead Pastor account if distinct from Church Administrator
+      if (leadPastor?.name?.trim() && leadPastor?.email?.trim()) {
+        const pEmail = leadPastor.email.trim().toLowerCase();
+        if (!seenEmails.has(pEmail)) {
+          seenEmails.add(pEmail);
+          const pastorUser = await tx.user.create({
+            data: {
+              tenantId: tenant.id,
+              fullName: leadPastor.name.trim(),
+              email: pEmail,
+              passwordHash,
+              phoneNumber: leadPastor.phone || '',
+              role: 'ADMIN',
+              departmentId: adminDept.id,
+            },
+          });
+          createdUsers.push(pastorUser);
+        }
+      }
+
+      // Create optional Department Heads (HODs)
+      if (Array.isArray(departmentHeads)) {
+        for (const h of departmentHeads) {
+          const hEmail = h.email?.trim().toLowerCase();
+          const hDept = departments.find((d) => d.code === h.code);
+          const hRole = HOD_ROLE_BY_DEPT[h.code];
+          if (h.name?.trim() && hEmail && !seenEmails.has(hEmail) && hDept && hRole) {
+            seenEmails.add(hEmail);
+            const hodUser = await tx.user.create({
+              data: {
+                tenantId: tenant.id,
+                fullName: h.name.trim(),
+                email: hEmail,
+                passwordHash,
+                phoneNumber: h.phone || '',
+                role: hRole,
+                departmentId: hDept.id,
+              },
+            });
+            createdUsers.push(hodUser);
+          }
+        }
+      }
+
+      return { tenant, departments, adminUser, users: createdUsers };
+    });
+
+    // Send Supabase verification / welcome link (invite-welcome.html) to the Lead Pastor
+    const pastorTarget =
+      leadPastor?.email?.trim() && leadPastor?.name?.trim()
+        ? { name: leadPastor.name.trim(), email: leadPastor.email.trim() }
+        : { name: String(adminName).trim(), email: String(adminEmail).trim() };
+
+    const verification = await sendPastorVerificationInvite({
+      pastorName: pastorTarget.name,
+      pastorEmail: pastorTarget.email,
+      churchName: result.tenant.name,
+      tenantId: result.tenant.id,
+      trialEndsAt: result.tenant.trialEndsAt,
+    });
+
+    const sanitizeUser = (u: typeof result.adminUser) => {
+      const { passwordHash: _pw, ...safe } = u;
+      void _pw;
+      return safe;
+    };
+
+    res.status(201).json({
+      tenant: {
+        ...result.tenant,
+        monthlyFee: Number(result.tenant.monthlyFee),
+      },
+      departments: result.departments,
+      adminUser: sanitizeUser(result.adminUser),
+      users: result.users.map(sanitizeUser),
+      verification,
+    });
+  } catch (err: unknown) {
+    res.status(400).json({
+      error: err instanceof Error ? err.message : 'Failed provisioning church tenant',
+    });
+  }
+});
+
+app.post(
+  '/api/platform/tenants/:id/resend-invite',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    if (req.userRole !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ error: 'Platform Council access required' });
+      return;
+    }
+
+    try {
+      const tenantId = String(req.params.id);
+      const { email } = (req.body || {}) as { email?: string };
+
+      const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+      if (!tenant) {
+        res.status(404).json({ error: 'Church tenant not found' });
+        return;
+      }
+
+      const targetUser = email?.trim()
+        ? await prisma.user.findFirst({
+            where: { tenantId, email: email.trim().toLowerCase() },
+          })
+        : await prisma.user.findFirst({
+            where: { tenantId, role: 'ADMIN' },
+            orderBy: { createdAt: 'asc' },
+          });
+
+      if (!targetUser) {
+        res.status(404).json({ error: 'No pastor or administrator login found for this church' });
+        return;
+      }
+
+      const verification = await sendPastorVerificationInvite({
+        pastorName: targetUser.fullName,
+        pastorEmail: targetUser.email,
+        churchName: tenant.name,
+        tenantId: tenant.id,
+        trialEndsAt: tenant.trialEndsAt,
+      });
+
+      res.json({ verification });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed resending verification invite',
+      });
+    }
+  }
+);
+
+app.patch(
+  '/api/platform/tenants/:id/toggle',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    if (req.userRole !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ error: 'Platform Council access required' });
+      return;
+    }
+    const existing = await prisma.tenant.findUnique({ where: { id: String(req.params.id) } });
+    if (!existing) {
+      res.status(404).json({ error: 'Tenant not found' });
+      return;
+    }
+    const updated = await prisma.tenant.update({
+      where: { id: existing.id },
+      data: { status: existing.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE' },
+    });
+    res.json({ data: updated });
+  }
+);
+
+// ─── 5. MEMBERS, CHILDREN, SERVICES & CHECK-IN (AIRPORT STARS & KIDS) ─────────
+
+app.post('/api/members', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { fullName, phoneNumber, gender, residence, bacentaId, campusId, isFirstTimer } =
+    req.body;
+  const member = await prisma.member.create({
+    data: {
+      tenantId,
+      fullName,
+      phoneNumber,
+      gender: gender || 'Female',
+      residence: residence || 'General',
+      bacentaId: bacentaId || null,
+      campusId: campusId || null,
+      isFirstTimer: Boolean(isFirstTimer),
+      joinedAt: new Date().toISOString().slice(0, 10),
+    },
+  });
+  res.status(201).json({ data: member });
+});
+
+app.post('/api/children', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { fullName, age, ageGroup, guardianName, guardianPhone, parentMemberId } = req.body;
+  const child = await prisma.child.create({
+    data: {
+      tenantId,
+      fullName,
+      age: Number(age),
+      ageGroup,
+      guardianName,
+      guardianPhone,
+      parentMemberId: parentMemberId || null,
+      joinedAt: new Date().toISOString().slice(0, 10),
+    },
+  });
+  res.status(201).json({ data: child });
+});
+
+app.post('/api/services', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { title, serviceDate, category } = req.body;
+  const srv = await prisma.service.create({
+    data: {
+      tenantId,
+      title,
+      serviceDate,
+      category: category || 'SUNDAY',
+      createdBy: req.userId,
+    },
+  });
+  res.status(201).json({ data: srv });
+});
+
+app.post('/api/attendance/member', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { serviceId, memberId, isServingCheckin, servingDepartmentId } = req.body;
+  const record = await prisma.serviceAttendance.upsert({
+    where: { serviceId_memberId: { serviceId, memberId } },
+    update: {
+      isServingCheckin: Boolean(isServingCheckin),
+      servingDepartmentId: servingDepartmentId || null,
+    },
+    create: {
+      tenantId,
+      serviceId,
+      memberId,
+      isServingCheckin: Boolean(isServingCheckin),
+      servingDepartmentId: servingDepartmentId || null,
+      checkedInBy: req.userId,
+    },
+  });
+  res.status(201).json({ data: record });
+});
+
+app.delete('/api/attendance/member', requireTenantAuth, async (req: TenantRequest, res) => {
+  const { serviceId, memberId } = req.body;
+  await prisma.serviceAttendance.deleteMany({
+    where: { serviceId, memberId },
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/attendance/child', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { serviceId, childId } = req.body;
+  const record = await prisma.childAttendance.upsert({
+    where: { serviceId_childId: { serviceId, childId } },
+    update: {},
+    create: {
+      tenantId,
+      serviceId,
+      childId,
+      checkedInBy: req.userId,
+    },
+  });
+  res.status(201).json({ data: record });
+});
+
+app.patch(
+  '/api/attendance/child/checkout',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const { serviceId, childId } = req.body;
+    const existing = await prisma.childAttendance.findUnique({
+      where: { serviceId_childId: { serviceId, childId } },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Child check-in record not found' });
+      return;
+    }
+    const updated = await prisma.childAttendance.update({
+      where: { id: existing.id },
+      data: { checkedOutAt: existing.checkedOutAt ? null : new Date() },
+    });
+    res.json({ data: updated });
+  }
+);
+
+// ─── 6. FINANCE & PARTNER REGISTER ────────────────────────────────────────────
+
+app.post('/api/partners', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { memberId, fullName, phoneNumber, email, tierOrPledge, monthlyPledge, frequency } =
+    req.body;
+  const partner = await prisma.partner.create({
+    data: {
+      tenantId,
+      memberId: memberId || null,
+      fullName,
+      phoneNumber,
+      email: email || '',
+      tierOrPledge: tierOrPledge || 'Kingdom Partner',
+      monthlyPledge: Number(monthlyPledge || 0),
+      frequency: frequency || 'Monthly',
+    },
+  });
+  res.status(201).json({ data: partner });
+});
+
+app.post(
+  '/api/finance/service-income',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const tenantId = resolveTargetTenantId(req);
+    if (!tenantId) {
+      res.status(400).json({ error: 'Missing tenant scope' });
+      return;
+    }
+    const {
+      serviceId,
+      category,
+      partnerId,
+      memberId,
+      amount,
+      paymentMethod,
+      referenceCode,
+      description,
+      transactionDate,
+    } = req.body;
+
+    if (category === 'PARTNERSHIP' && !partnerId) {
+      res.status(400).json({
+        error: 'Partnership entries must be tied to a registered Partner.',
+      });
+      return;
+    }
+
+    const finDept = await prisma.department.findUnique({
+      where: { tenantId_code: { tenantId, code: 'FINANCE' } },
+    });
+
+    const tx = await prisma.financeTransaction.create({
+      data: {
+        tenantId,
+        type: 'INCOME',
+        category,
+        sourceScope: 'SERVICE',
+        serviceId,
+        departmentId: finDept?.id ?? null,
+        partnerId: category === 'PARTNERSHIP' ? partnerId : null,
+        memberId: memberId || null,
+        amount: Number(amount),
+        paymentMethod: paymentMethod || 'Cash',
+        referenceCode: referenceCode || '',
+        description: description || `Service ${category}`,
+        transactionDate,
+        recordedBy: req.userId,
+      },
+    });
+    res.status(201).json({ data: tx });
+  }
+);
+
+app.post('/api/finance/expenses', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const {
+    serviceId,
+    departmentId,
+    requisitionId,
+    amount,
+    paymentMethod,
+    referenceCode,
+    description,
+    transactionDate,
+  } = req.body;
+
+  const tx = await prisma.$transaction(async (db) => {
+    const created = await db.financeTransaction.create({
+      data: {
+        tenantId,
+        type: 'EXPENSE',
+        category: requisitionId ? 'REQUISITION_PAYOUT' : 'OTHER_EXPENSE',
+        sourceScope: serviceId ? 'SERVICE' : 'DEPARTMENT',
+        serviceId: serviceId || null,
+        departmentId: departmentId || null,
+        requisitionId: requisitionId || null,
+        amount: Number(amount),
+        paymentMethod: paymentMethod || 'Cash',
+        referenceCode: referenceCode || '',
+        description,
+        transactionDate,
+        recordedBy: req.userId,
+      },
+    });
+
+    if (requisitionId) {
+      const reqRow = await db.requisition.findUnique({ where: { id: requisitionId } });
+      if (reqRow) {
+        const nextPaid = Math.min(reqRow.totalAmount, reqRow.amountPaid + Number(amount));
+        await db.requisition.update({
+          where: { id: requisitionId },
+          data: {
+            amountPaid: nextPaid,
+            status: nextPaid >= reqRow.totalAmount ? 'PAID' : reqRow.status,
+          },
+        });
+      }
+    }
+    return created;
+  });
+
+  res.status(201).json({ data: tx });
+});
+
+// ─── 7. HOD "MORE" TAB (REQUISITIONS, WORKPLANS, CONTRIBUTIONS, TEAM) ─────────
+
+app.post(
+  '/api/departments/contributions',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const tenantId = resolveTargetTenantId(req);
+    if (!tenantId) {
+      res.status(400).json({ error: 'Missing tenant scope' });
+      return;
+    }
+    const {
+      departmentId,
+      memberId,
+      amount,
+      purpose,
+      paymentMethod,
+      referenceCode,
+      contributionDate,
+    } = req.body;
+
+    const record = await prisma.$transaction(async (db) => {
+      const contr = await db.deptContribution.create({
+        data: {
+          tenantId,
+          departmentId,
+          memberId,
+          amount: Number(amount),
+          purpose,
+          paymentMethod: paymentMethod || 'Mobile Money',
+          referenceCode: referenceCode || '',
+          contributionDate,
+          recordedBy: req.userId,
+        },
+      });
+      await db.financeTransaction.create({
+        data: {
+          tenantId,
+          type: 'INCOME',
+          category: 'DEPT_CONTRIBUTION',
+          sourceScope: 'DEPARTMENT',
+          departmentId,
+          memberId,
+          amount: Number(amount),
+          paymentMethod: paymentMethod || 'Mobile Money',
+          referenceCode: referenceCode || '',
+          description: `Dept Contribution: ${purpose}`,
+          transactionDate: contributionDate,
+          recordedBy: req.userId,
+        },
+      });
+      return contr;
+    });
+
+    res.status(201).json({ data: record });
+  }
+);
+
+app.post('/api/workplans', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { departmentId, monthLabel, title, items, deptContributionAmount } = req.body as {
+    departmentId: string;
+    monthLabel: string;
+    title: string;
+    items: { activity: string; itemName: string; quantity: number; unitCost: number }[];
+    deptContributionAmount: number;
+  };
+
+  const totalRequested = items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+  const wp = await prisma.workplan.create({
+    data: {
+      tenantId,
+      departmentId,
+      monthLabel,
+      title,
+      totalRequested,
+      deptContributionAmount: Number(deptContributionAmount || 0),
+      submittedBy: req.userId,
+      items: {
+        create: items.map((i) => ({
+          activity: i.activity,
+          itemName: i.itemName,
+          quantity: i.quantity,
+          unitCost: i.unitCost,
+          totalCost: i.quantity * i.unitCost,
+        })),
+      },
+    },
+    include: { items: true },
+  });
+  res.status(201).json({ data: wp });
+});
+
+app.patch(
+  '/api/workplans/:id/review',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const { decision, approvedAmount, reviewNotes } = req.body;
+    const updated = await prisma.workplan.update({
+      where: { id: String(req.params.id) },
+      data: {
+        status: decision,
+        totalApproved: decision === 'APPROVED' ? Number(approvedAmount) : 0,
+        reviewNotes: reviewNotes || '',
+      },
+    });
+    res.json({ data: updated });
+  }
+);
+
+app.post('/api/requisitions', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { departmentId, workplanId, serviceId, title, items } = req.body as {
+    departmentId: string;
+    workplanId?: string | null;
+    serviceId?: string | null;
+    title: string;
+    items: { description: string; quantity: number; unitCost: number }[];
+  };
+  const count = await prisma.requisition.count({ where: { tenantId } });
+  const totalAmount = items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+
+  const created = await prisma.requisition.create({
+    data: {
+      tenantId,
+      departmentId,
+      workplanId: workplanId || null,
+      serviceId: serviceId || null,
+      requisitionNumber: `REQ-${1001 + count}`,
+      title,
+      itemsJson: items,
+      totalAmount,
+      requestedBy: req.userId,
+      requestedAt: new Date().toISOString().slice(0, 10),
+    },
+  });
+  res.status(201).json({ data: created });
+});
+
+app.patch(
+  '/api/requisitions/:id/review',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const { decision, rejectionReason } = req.body;
+    const updated = await prisma.requisition.update({
+      where: { id: String(req.params.id) },
+      data: {
+        status: decision,
+        rejectionReason: decision === 'REJECTED' ? rejectionReason || '' : '',
+      },
+    });
+    res.json({ data: updated });
+  }
+);
+
+// ─── 8. FELLOWSHIP ENGINE (BACENTAS & CAMPUSES) ───────────────────────────────
+
+app.post('/api/fellowship/units', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const {
+    unitType,
+    name,
+    locationOrInstitution,
+    meetingDay,
+    leaderName,
+    leaderPhone,
+  } = req.body;
+
+  const unit = await prisma.fellowshipUnit.create({
+    data: {
+      tenantId,
+      unitType,
+      name,
+      locationOrInstitution,
+      meetingDay: meetingDay || 'Wednesday 6:00 PM',
+      leaderName,
+      leaderPhone,
+    },
+  });
+  res.status(201).json({ data: unit });
+});
+
+app.post('/api/fellowship/meetings', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const {
+    unitId,
+    meetingDate,
+    title,
+    checkedInMemberIds,
+    labourersCount,
+    soulsWonCount,
+    testimony,
+  } = req.body as {
+    unitId: string;
+    meetingDate: string;
+    title: string;
+    checkedInMemberIds: string[];
+    labourersCount: number;
+    soulsWonCount: number;
+    testimony: string;
+  };
+
+  const meeting = await prisma.fellowshipMeeting.create({
+    data: {
+      tenantId,
+      unitId,
+      meetingDate,
+      title,
+      labourersCount: Number(labourersCount || 1),
+      soulsWonCount: Number(soulsWonCount || 0),
+      testimony: testimony || '',
+      submittedBy: req.userId,
+      attendance: {
+        create: (checkedInMemberIds || []).map((memberId) => ({
+          tenantId,
+          memberId,
+        })),
+      },
+    },
+  });
+  res.status(201).json({ data: meeting });
+});
+
+app.post(
+  '/api/fellowship/outreaches',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const tenantId = resolveTargetTenantId(req);
+    if (!tenantId) {
+      res.status(400).json({ error: 'Missing tenant scope' });
+      return;
+    }
+    const { unitId, outreachDate, location, labourersCount, soulsWonCount, testimony } =
+      req.body;
+    const outreach = await prisma.fellowshipOutreach.create({
+      data: {
+        tenantId,
+        unitId,
+        outreachDate,
+        location: location || '',
+        labourersCount: Number(labourersCount || 1),
+        soulsWonCount: Number(soulsWonCount || 0),
+        testimony,
+        submittedBy: req.userId,
+      },
+    });
+    res.status(201).json({ data: outreach });
+  }
+);
+
+app.post('/api/fellowship/finance', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const {
+    unitId,
+    unitName,
+    unitType,
+    category,
+    amount,
+    paymentMethod,
+    referenceCode,
+    transactionDate,
+  } = req.body;
+
+  const dept = await prisma.department.findUnique({
+    where: {
+      tenantId_code: {
+        tenantId,
+        code: unitType === 'BACENTA' ? 'BACENTA' : 'CAMPUSES',
+      },
+    },
+  });
+
+  const tx = await prisma.financeTransaction.create({
+    data: {
+      tenantId,
+      type: 'INCOME',
+      category,
+      sourceScope: unitType === 'BACENTA' ? 'BACENTA_MEETING' : 'CAMPUS_MEETING',
+      departmentId: dept?.id ?? null,
+      fellowshipUnitId: unitId,
+      amount: Number(amount),
+      paymentMethod: paymentMethod || 'Mobile Money',
+      referenceCode: referenceCode || '',
+      description: `${unitName} Meeting ${category}`,
+      transactionDate,
+      recordedBy: req.userId,
+    },
+  });
+  res.status(201).json({ data: tx });
+});
+
+// ─── 9. TELE PASTORING, ABSENTEES & 4-WEEK SOULS ──────────────────────────────
+
+app.post(
+  '/api/tele-pastoring/reachouts',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    const tenantId = resolveTargetTenantId(req);
+    if (!tenantId) {
+      res.status(400).json({ error: 'Missing tenant scope' });
+      return;
+    }
+    const {
+      memberId,
+      serviceId,
+      mode,
+      labourersCount,
+      amountSpentOrSent,
+      comment,
+      reachoutDate,
+    } = req.body;
+
+    const record = await prisma.$transaction(async (db) => {
+      let financeTxId: string | null = null;
+      const numericAmount = Number(amountSpentOrSent || 0);
+
+      if (numericAmount > 0) {
+        const teleDept = await db.department.findUnique({
+          where: { tenantId_code: { tenantId, code: 'TELE_PASTORING' } },
+        });
+        const member = await db.member.findUnique({ where: { id: memberId } });
+        const exp = await db.financeTransaction.create({
+          data: {
+            tenantId,
+            type: 'EXPENSE',
+            category: 'TELE_REACHOUT_EXPENSE',
+            sourceScope: serviceId ? 'SERVICE' : 'DEPARTMENT',
+            serviceId: serviceId || null,
+            departmentId: teleDept?.id ?? null,
+            memberId,
+            amount: numericAmount,
+            paymentMethod: mode === 'PHONE_CALL' ? 'Mobile Money' : 'Cash',
+            description: `Tele-Pastoring ${
+              mode === 'PHYSICAL_VISIT' ? 'Physical Visit' : 'Phone Support'
+            } — ${member?.fullName ?? 'Member'}`,
+            transactionDate: reachoutDate,
+            recordedBy: req.userId,
+          },
+        });
+        financeTxId = exp.id;
+      }
+
+      return db.teleReachout.create({
+        data: {
+          tenantId,
+          memberId,
+          serviceId: serviceId || null,
+          mode,
+          labourersCount:
+            mode === 'PHYSICAL_VISIT' ? Math.max(1, Number(labourersCount || 1)) : null,
+          amountSpent: numericAmount,
+          comment,
+          financeTransactionId: financeTxId,
+          reachedBy: req.userId,
+          reachoutDate,
+        },
+      });
+    });
+
+    res.status(201).json({ data: record });
+  }
+);
+
+app.post('/api/souls/weeks', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  const { soulId, weekNumber, contactMode, attendedService, comment } = req.body;
+
+  await prisma.$transaction(async (db) => {
+    await db.soulFollowupWeek.upsert({
+      where: { soulId_weekNumber: { soulId, weekNumber: Number(weekNumber) } },
+      update: {
+        contactMode,
+        attendedService: Boolean(attendedService),
+        comment,
+        completedBy: req.userId,
+        completedAt: new Date(),
+      },
+      create: {
+        tenantId,
+        soulId,
+        weekNumber: Number(weekNumber),
+        contactMode,
+        attendedService: Boolean(attendedService),
+        comment,
+        completedBy: req.userId,
+      },
+    });
+
+    const weeks = await db.soulFollowupWeek.findMany({ where: { soulId } });
+    let nextStatus: SoulStatus = 'WEEK_1';
+    if (weeks.length >= 4) {
+      nextStatus = 'INTEGRATED';
+    } else {
+      const maxWeek = Math.max(...weeks.map((w) => w.weekNumber));
+      const map: Record<number, SoulStatus> = {
+        1: 'WEEK_1',
+        2: 'WEEK_2',
+        3: 'WEEK_3',
+        4: 'INTEGRATED',
+      };
+      nextStatus = map[maxWeek] ?? 'WEEK_1';
+    }
+
+    await db.soulWon.update({
+      where: { id: soulId },
+      data: { status: nextStatus },
+    });
+  });
+
+  res.json({ ok: true });
+});
+
+const PORT = Number(process.env.PORT) || 5000;
+app.listen(PORT, () => {
+  console.log(`Open Church Backend (Prisma + Supabase Postgres) running on http://localhost:${PORT}`);
+});

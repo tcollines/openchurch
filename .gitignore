@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Production builds & caches
+dist/
+**/dist/
+build/
+.vite/
+**/.vite/
+**/.vite-temp/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Environment variables & secrets (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local scratch / backup directories
+_to_delete/
+frontend/_backup_before_redesign_2026-11-17/
+frontend/_original_ui_backup/
+
+# Logs & OS files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

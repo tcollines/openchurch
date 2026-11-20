@@ -1,0 +1,669 @@
+// ============================================================================
+// OPEN CHURCH — PRISMA SCHEMA FOR SUPABASE POSTGRESQL (BACKEND-ONLY)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Supabase Transaction Pooler (:6543?pgbouncer=true)
+  directUrl = env("DIRECT_URL")   // Supabase Session/Direct URL (:5432) for migrations
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────────────────────
+
+enum DepartmentCode {
+  ADMIN
+  FINANCE
+  BACENTA
+  AIRPORT_STARS
+  TELE_PASTORING
+  CHILDRENS_CHURCH
+  CAMPUSES
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  ADMIN
+  FINANCE_HOD
+  FINANCE_OFFICER
+  BACENTA_HOD
+  BACENTA_LEADER
+  AIRPORT_HOD
+  AIRPORT_MEMBER
+  TELE_HOD
+  TELE_PASTOR
+  CHILDREN_HOD
+  CHILDREN_WORKER
+  CAMPUS_HOD
+  CAMPUS_LEADER
+}
+
+enum ServiceCategory {
+  SUNDAY
+  MIDWEEK
+  SPECIAL
+}
+
+enum ServiceStatus {
+  OPEN
+  CLOSED
+}
+
+enum FinanceType {
+  INCOME
+  EXPENSE
+}
+
+enum FinanceCategory {
+  OFFERTORY
+  TITHE
+  PARTNERSHIP
+  DEPT_CONTRIBUTION
+  REQUISITION_PAYOUT
+  TELE_REACHOUT_EXPENSE
+  OTHER_EXPENSE
+}
+
+enum FinanceScope {
+  SERVICE
+  BACENTA_MEETING
+  CAMPUS_MEETING
+  DEPARTMENT
+}
+
+enum WorkflowStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum RequisitionStatus {
+  DRAFT
+  PENDING_ADMIN
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum FellowshipUnitType {
+  BACENTA
+  CAMPUS
+}
+
+enum ReachoutMode {
+  PHYSICAL_VISIT
+  PHONE_CALL
+}
+
+enum AbsenteeStatus {
+  PENDING
+  CONTACTED
+  RESOLVED
+}
+
+enum SoulSourceType {
+  SERVICE
+  BACENTA_OUTREACH
+  BACENTA_MEETING
+  CAMPUS_OUTREACH
+  CAMPUS_MEETING
+  CHILDRENS_CHURCH
+}
+
+enum SoulStatus {
+  NEW
+  WEEK_1
+  WEEK_2
+  WEEK_3
+  WEEK_4
+  INTEGRATED
+}
+
+// ─── MODELS ──────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  logoUrl   String   @default("/logo.jpg") @map("logo_url")
+  currency  String   @default("UGX")
+  city      String   @default("")
+  country   String   @default("")
+  status              String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  subscriptionStatus  String   @default("TRIALING") @map("subscription_status") // TRIALING | ACTIVE | PAST_DUE | SUSPENDED
+  monthlyFee          Decimal  @default(50000) @map("monthly_fee") @db.Decimal(12, 2)
+  trialEndsAt         DateTime @default(now()) @map("trial_ends_at")
+  subscriptionEndsAt  DateTime? @map("subscription_ends_at")
+  lastPaidAt          DateTime? @map("last_paid_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  departments                 Department[]
+  users                       User[]
+  fellowshipUnits             FellowshipUnit[]
+  members                     Member[]
+  children                    Child[]
+  servingMembers              ServingMember[]
+  services                    Service[]
+  serviceAttendance           ServiceAttendance[]
+  childAttendance             ChildAttendance[]
+  partners                    Partner[]
+  deptContributions           DeptContribution[]
+  workplans                   Workplan[]
+  requisitions                Requisition[]
+  financeTransactions         FinanceTransaction[]
+  fellowshipMeetings          FellowshipMeeting[]
+  fellowshipMeetingAttendance FellowshipMeetingAttendance[]
+  fellowshipOutreaches        FellowshipOutreach[]
+  teleReachouts               TeleReachout[]
+  absenteeFollowups           AbsenteeFollowup[]
+  soulsWon                    SoulWon[]
+  soulFollowupWeeks           SoulFollowupWeek[]
+  subscriptionPayments        SubscriptionPayment[]
+
+  @@map("tenants")
+}
+
+model Department {
+  id          String         @id @default(uuid()) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  code        DepartmentCode
+  name        String
+  description String         @default("")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users               User[]
+  servingMembers      ServingMember[]
+  deptContributions   DeptContribution[]
+  workplans           Workplan[]
+  requisitions        Requisition[]
+  financeTransactions FinanceTransaction[]
+  serviceDuties       ServiceAttendance[]
+
+  @@unique([tenantId, code])
+  @@map("departments")
+}
+
+model FellowshipUnit {
+  id                    String             @id @default(uuid()) @db.Uuid
+  tenantId              String             @map("tenant_id") @db.Uuid
+  unitType              FellowshipUnitType @map("unit_type")
+  name                  String
+  locationOrInstitution String             @map("location_or_institution")
+  meetingDay            String             @default("Wednesday 6:00 PM") @map("meeting_day")
+  leaderUserId          String?            @map("leader_user_id") @db.Uuid
+  leaderName            String             @default("") @map("leader_name")
+  leaderPhone           String             @default("") @map("leader_phone")
+  createdAt             DateTime           @default(now()) @map("created_at")
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users               User[]
+  bacentaMembers      Member[]             @relation("BacentaMembers")
+  campusMembers       Member[]             @relation("CampusMembers")
+  meetings            FellowshipMeeting[]
+  outreaches          FellowshipOutreach[]
+  financeTransactions FinanceTransaction[]
+  soulsWon            SoulWon[]
+
+  @@index([tenantId, unitType])
+  @@map("fellowship_units")
+}
+
+model User {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String?  @map("tenant_id") @db.Uuid
+  fullName         String   @map("full_name")
+  email            String   @unique
+  passwordHash     String   @map("password_hash")
+  phoneNumber      String   @default("") @map("phone_number")
+  role             UserRole
+  departmentId     String?  @map("department_id") @db.Uuid
+  fellowshipUnitId String?  @map("fellowship_unit_id") @db.Uuid
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  tenant         Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department     Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  fellowshipUnit FellowshipUnit? @relation(fields: [fellowshipUnitId], references: [id], onDelete: SetNull)
+  servingMembers ServingMember[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Member {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  fullName     String   @map("full_name")
+  phoneNumber  String   @map("phone_number")
+  gender       String   @default("Female")
+  residence    String   @default("General")
+  bacentaId    String?  @map("bacenta_id") @db.Uuid
+  campusId     String?  @map("campus_id") @db.Uuid
+  isFirstTimer Boolean  @default(false) @map("is_first_timer")
+  joinedAt     String   @map("joined_at") // YYYY-MM-DD
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant              Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bacenta             FellowshipUnit?               @relation("BacentaMembers", fields: [bacentaId], references: [id], onDelete: SetNull)
+  campus              FellowshipUnit?               @relation("CampusMembers", fields: [campusId], references: [id], onDelete: SetNull)
+  servingMembers      ServingMember[]
+  serviceAttendance   ServiceAttendance[]
+  partners            Partner[]
+  deptContributions   DeptContribution[]
+  financeTransactions FinanceTransaction[]
+  meetingAttendance   FellowshipMeetingAttendance[]
+  teleReachouts       TeleReachout[]
+  absenteeFollowups   AbsenteeFollowup[]
+
+  @@index([tenantId, fullName, phoneNumber])
+  @@map("members")
+}
+
+model Child {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  fullName       String   @map("full_name")
+  age            Int
+  ageGroup       String   @map("age_group")
+  guardianName   String   @map("guardian_name")
+  guardianPhone  String   @map("guardian_phone")
+  parentMemberId String?  @map("parent_member_id") @db.Uuid
+  joinedAt       String   @map("joined_at") // YYYY-MM-DD
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  childAttendance   ChildAttendance[]
+  absenteeFollowups AbsenteeFollowup[]
+
+  @@index([tenantId])
+  @@map("children")
+}
+
+model ServingMember {
+  id           String @id @default(uuid()) @db.Uuid
+  tenantId     String @map("tenant_id") @db.Uuid
+  departmentId String @map("department_id") @db.Uuid
+  memberId     String @map("member_id") @db.Uuid
+  servingRole  String @default("Member") @map("serving_role")
+  userId       String? @map("user_id") @db.Uuid
+  joinedDeptAt String @map("joined_dept_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  member     Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  user       User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([departmentId, memberId])
+  @@map("serving_members")
+}
+
+model Service {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @map("tenant_id") @db.Uuid
+  title       String
+  serviceDate String          @map("service_date") // YYYY-MM-DD
+  category    ServiceCategory @default(SUNDAY)
+  status      ServiceStatus   @default(OPEN)
+  createdBy   String?         @map("created_by") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  serviceAttendance   ServiceAttendance[]
+  childAttendance     ChildAttendance[]
+  financeTransactions FinanceTransaction[]
+  requisitions        Requisition[]
+  teleReachouts       TeleReachout[]
+  soulsWon            SoulWon[]
+
+  @@index([tenantId, serviceDate])
+  @@map("services")
+}
+
+model ServiceAttendance {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  serviceId           String   @map("service_id") @db.Uuid
+  memberId            String   @map("member_id") @db.Uuid
+  isFirstTimeVisit    Boolean  @default(false) @map("is_first_time_visit")
+  isServingCheckin    Boolean  @default(false) @map("is_serving_checkin")
+  servingDepartmentId String?  @map("serving_department_id") @db.Uuid
+  checkedInAt         DateTime @default(now()) @map("checked_in_at")
+  checkedInBy         String?  @map("checked_in_by") @db.Uuid
+
+  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service           Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  member            Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  servingDepartment Department? @relation(fields: [servingDepartmentId], references: [id], onDelete: SetNull)
+
+  @@unique([serviceId, memberId])
+  @@map("service_attendance")
+}
+
+model ChildAttendance {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  serviceId    String    @map("service_id") @db.Uuid
+  childId      String    @map("child_id") @db.Uuid
+  checkedInAt  DateTime  @default(now()) @map("checked_in_at")
+  checkedOutAt DateTime? @map("checked_out_at")
+  soulWon      Boolean   @default(false) @map("soul_won")
+  checkedInBy  String?   @map("checked_in_by") @db.Uuid
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  child   Child   @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, childId])
+  @@map("child_attendance")
+}
+
+model Partner {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  memberId      String?  @map("member_id") @db.Uuid
+  fullName      String   @map("full_name")
+  phoneNumber   String   @map("phone_number")
+  email         String   @default("")
+  tierOrPledge  String   @default("Kingdom Partner") @map("tier_or_pledge")
+  monthlyPledge Float    @default(0) @map("monthly_pledge")
+  frequency     String   @default("Monthly")
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  member              Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  financeTransactions FinanceTransaction[]
+
+  @@index([tenantId])
+  @@map("partners")
+}
+
+model DeptContribution {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  departmentId     String   @map("department_id") @db.Uuid
+  memberId         String   @map("member_id") @db.Uuid
+  amount           Float
+  purpose          String
+  paymentMethod    String   @default("Mobile Money") @map("payment_method")
+  referenceCode    String   @default("") @map("reference_code")
+  contributionDate String   @map("contribution_date")
+  recordedBy       String?  @map("recorded_by") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  member     Member     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, departmentId])
+  @@map("dept_contributions")
+}
+
+model Workplan {
+  id                     String         @id @default(uuid()) @db.Uuid
+  tenantId               String         @map("tenant_id") @db.Uuid
+  departmentId           String         @map("department_id") @db.Uuid
+  monthLabel             String         @map("month_label")
+  title                  String
+  totalRequested         Float          @default(0) @map("total_requested")
+  deptContributionAmount Float          @default(0) @map("dept_contribution_amount")
+  totalApproved          Float          @default(0) @map("total_approved")
+  status                 WorkflowStatus @default(SUBMITTED)
+  reviewNotes            String         @default("") @map("review_notes")
+  submittedBy            String?        @map("submitted_by") @db.Uuid
+  createdAt              DateTime       @default(now()) @map("created_at")
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department   Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  items        WorkplanItem[]
+  requisitions Requisition[]
+
+  @@index([tenantId, departmentId])
+  @@map("workplans")
+}
+
+model WorkplanItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  workplanId String   @map("workplan_id") @db.Uuid
+  activity   String
+  itemName   String   @map("item_name")
+  quantity   Int      @default(1)
+  unitCost   Float    @map("unit_cost")
+  totalCost  Float    @map("total_cost")
+
+  workplan Workplan @relation(fields: [workplanId], references: [id], onDelete: Cascade)
+
+  @@map("workplan_items")
+}
+
+model Requisition {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @map("tenant_id") @db.Uuid
+  departmentId      String            @map("department_id") @db.Uuid
+  workplanId        String?           @map("workplan_id") @db.Uuid
+  serviceId         String?           @map("service_id") @db.Uuid
+  requisitionNumber String            @map("requisition_number")
+  title             String
+  itemsJson         Json              @default("[]") @map("items_json")
+  totalAmount       Float             @map("total_amount")
+  amountPaid        Float             @default(0) @map("amount_paid")
+  status            RequisitionStatus @default(PENDING_ADMIN)
+  rejectionReason   String            @default("") @map("rejection_reason")
+  requestedBy       String?           @map("requested_by") @db.Uuid
+  requestedAt       String            @map("requested_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department          Department           @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  workplan            Workplan?            @relation(fields: [workplanId], references: [id], onDelete: SetNull)
+  service             Service?             @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  financeTransactions FinanceTransaction[]
+
+  @@index([tenantId, departmentId])
+  @@map("requisitions")
+}
+
+model FinanceTransaction {
+  id               String          @id @default(uuid()) @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  type             FinanceType
+  category         FinanceCategory
+  sourceScope      FinanceScope    @default(SERVICE) @map("source_scope")
+  serviceId        String?         @map("service_id") @db.Uuid
+  departmentId     String?         @map("department_id") @db.Uuid
+  partnerId        String?         @map("partner_id") @db.Uuid
+  memberId         String?         @map("member_id") @db.Uuid
+  fellowshipUnitId String?         @map("fellowship_unit_id") @db.Uuid
+  requisitionId    String?         @map("requisition_id") @db.Uuid
+  amount           Float
+  paymentMethod    String          @default("Cash") @map("payment_method")
+  referenceCode    String          @default("") @map("reference_code")
+  description      String          @default("")
+  isVerified       Boolean         @default(true) @map("is_verified")
+  transactionDate  String          @map("transaction_date")
+  recordedBy       String?         @map("recorded_by") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service        Service?        @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  department     Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  partner        Partner?        @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  member         Member?         @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  fellowshipUnit FellowshipUnit? @relation(fields: [fellowshipUnitId], references: [id], onDelete: SetNull)
+  requisition    Requisition?    @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, serviceId, type])
+  @@map("finance_transactions")
+}
+
+model FellowshipMeeting {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  unitId             String   @map("unit_id") @db.Uuid
+  meetingDate        String   @map("meeting_date")
+  title              String
+  labourersCount     Int      @default(1) @map("labourers_count")
+  soulsWonCount      Int      @default(0) @map("souls_won_count")
+  testimony          String   @default("")
+  titheCollected     Float    @default(0) @map("tithe_collected")
+  offertoryCollected Float    @default(0) @map("offertory_collected")
+  submittedBy        String?  @map("submitted_by") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit       FellowshipUnit                @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  attendance FellowshipMeetingAttendance[]
+
+  @@index([tenantId, unitId])
+  @@map("fellowship_meetings")
+}
+
+model FellowshipMeetingAttendance {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  meetingId   String   @map("meeting_id") @db.Uuid
+  memberId    String   @map("member_id") @db.Uuid
+  checkedInAt DateTime @default(now()) @map("checked_in_at")
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  meeting FellowshipMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  member  Member            @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, memberId])
+  @@map("fellowship_meeting_attendance")
+}
+
+model FellowshipOutreach {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  unitId         String   @map("unit_id") @db.Uuid
+  outreachDate   String   @map("outreach_date")
+  location       String   @default("")
+  labourersCount Int      @map("labourers_count")
+  soulsWonCount  Int      @default(0) @map("souls_won_count")
+  testimony      String
+  submittedBy    String?  @map("submitted_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit   FellowshipUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, unitId])
+  @@map("fellowship_outreaches")
+}
+
+model TeleReachout {
+  id                   String       @id @default(uuid()) @db.Uuid
+  tenantId             String       @map("tenant_id") @db.Uuid
+  memberId             String       @map("member_id") @db.Uuid
+  serviceId            String?      @map("service_id") @db.Uuid
+  mode                 ReachoutMode
+  labourersCount       Int?         @map("labourers_count")
+  amountSpent          Float        @default(0) @map("amount_spent")
+  comment              String
+  financeTransactionId String?      @map("finance_transaction_id") @db.Uuid
+  reachedBy            String?      @map("reached_by") @db.Uuid
+  reachoutDate         String       @map("reachout_date")
+  createdAt            DateTime     @default(now()) @map("created_at")
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  member  Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, memberId])
+  @@map("tele_reachouts")
+}
+
+model AbsenteeFollowup {
+  id                  String         @id @default(uuid()) @db.Uuid
+  tenantId            String         @map("tenant_id") @db.Uuid
+  personType          String         @map("person_type") // ADULT | CHILD
+  memberId            String?        @map("member_id") @db.Uuid
+  childId             String?        @map("child_id") @db.Uuid
+  missedServicesCount Int            @default(3) @map("missed_services_count")
+  status              AbsenteeStatus @default(CONTACTED)
+  comment             String
+  followedBy          String?        @map("followed_by") @db.Uuid
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  member Member? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  child  Child?  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, personType])
+  @@map("absentee_followups")
+}
+
+model SoulWon {
+  id               String         @id @default(uuid()) @db.Uuid
+  tenantId         String         @map("tenant_id") @db.Uuid
+  fullName         String         @map("full_name")
+  phoneNumber      String         @default("") @map("phone_number")
+  guardianName     String         @default("") @map("guardian_name")
+  guardianPhone    String         @default("") @map("guardian_phone")
+  isChild          Boolean        @default(false) @map("is_child")
+  sourceType       SoulSourceType @map("source_type")
+  sourceLabel      String         @default("") @map("source_label")
+  serviceId        String?        @map("service_id") @db.Uuid
+  fellowshipUnitId String?        @map("fellowship_unit_id") @db.Uuid
+  wonDate          String         @map("won_date")
+  status           SoulStatus     @default(NEW)
+  notes            String         @default("")
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service        Service?           @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  fellowshipUnit FellowshipUnit?    @relation(fields: [fellowshipUnitId], references: [id], onDelete: SetNull)
+  followupWeeks  SoulFollowupWeek[]
+
+  @@index([tenantId])
+  @@map("souls_won")
+}
+
+model SoulFollowupWeek {
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @map("tenant_id") @db.Uuid
+  soulId          String       @map("soul_id") @db.Uuid
+  weekNumber      Int          @map("week_number") // 1..4
+  contactMode     ReachoutMode @default(PHONE_CALL) @map("contact_mode")
+  attendedService Boolean      @default(false) @map("attended_service")
+  comment         String
+  completedBy     String?      @map("completed_by") @db.Uuid
+  completedAt     DateTime     @default(now()) @map("completed_at")
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  soul   SoulWon @relation(fields: [soulId], references: [id], onDelete: Cascade)
+
+  @@unique([soulId, weekNumber])
+  @@map("soul_followup_weeks")
+}
+
+model SubscriptionPayment {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  amount          Decimal  @db.Decimal(12, 2)
+  currency        String   @default("UGX")
+  paymentMethod   String   @default("MTN_MOMO") @map("payment_method") // MTN_MOMO | AIRTEL_MONEY | BANK_TRANSFER | VISA
+  referenceNumber String   @map("reference_number")
+  phoneOrAccount  String   @default("") @map("phone_or_account")
+  status          String   @default("COMPLETED") // COMPLETED | PENDING | FAILED
+  periodStart     DateTime @map("period_start")
+  periodEnd       DateTime @map("period_end")
+  recordedBy      String?  @map("recorded_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("subscription_payments")
+}
+
+

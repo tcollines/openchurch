@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    -webkit-tap-highlight-color: transparent;
+    background: #f2f3ef;
+    color: #18231c;
+    font-family: Figtree, system-ui, -apple-system, sans-serif;
+  }
+  h1, h2, h3 {
+    font-family: Outfit, Figtree, system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+  a {
+    color: #2f6b0a;
+  }
+  :focus-visible {
+    outline: 3px solid #a3e635;
+    outline-offset: 2px;
+  }
+  /* Numbers line up in every table and total */
+  .font-mono,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Scrollbars are hidden everywhere — scrolling still works (touch, wheel, keys) */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@layer components {
+  .oc-card {
+    @apply bg-white rounded-card p-4 flex flex-col gap-3;
+  }
+  .oc-h1 {
+    @apply font-display text-[28px] md:text-[34px] leading-[1.1] font-bold tracking-[-0.025em] text-church-text;
+  }
+  .oc-h2 {
+    @apply font-display text-[17px] font-semibold tracking-[-0.01em] text-church-text;
+  }
+  .oc-sub {
+    @apply text-[13px] text-church-muted;
+  }
+  .oc-num {
+    @apply font-display font-bold tracking-[-0.02em] tabular-nums;
+  }
+  .oc-label {
+    @apply block text-sm font-semibold text-church-text;
+  }
+  .oc-field {
+    @apply w-full min-w-0 h-[52px] px-3.5 rounded-[14px] border-[1.5px] border-church-border bg-church-field text-base font-medium text-church-text placeholder:text-church-faint outline-none transition focus:bg-white focus:border-church-lime focus:ring-4 focus:ring-[#EEF8DC];
+  }
+  .oc-press {
+    @apply transition-transform duration-100 ease-out active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100;
+  }
+  .oc-btn {
+    @apply oc-press inline-flex items-center justify-center gap-2 h-[50px] px-5 rounded-2xl font-bold text-[15px] whitespace-nowrap disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .oc-btn-primary {
+    @apply oc-btn bg-church-lime text-church-forest hover:bg-church-limeHover;
+  }
+  .oc-btn-dark {
+    @apply oc-btn bg-church-forest text-white hover:bg-church-forestLight;
+  }
+  .oc-btn-ghost {
+    @apply oc-btn bg-white text-church-text border-[1.5px] border-church-border hover:bg-church-soft;
+  }
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/* kept for existing markup */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Native selects get the same quiet chevron as the design */
+select.oc-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 42px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235C655E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 18px;
+}
+
+/* ── Phones: match the canvas exactly ── */
+@media (max-width: 767px) {
+  /* Page actions become compact icon buttons beside the title */
+  .oc-hdr-actions > .oc-btn,
+  .oc-hdr-actions > .oc-btn-primary,
+  .oc-hdr-actions > .oc-btn-dark,
+  .oc-hdr-actions > .oc-btn-ghost {
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+    border-radius: 14px;
+  }
+  .oc-hdr-actions svg {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  /* KPI cards collapse into one white stats card */
+  .oc-kpis {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    background: #fff;
+    border-radius: 22px;
+    padding: 16px;
+  }
+  .oc-kpis > .oc-kpi {
+    background: transparent !important;
+    padding: 0 !important;
+    gap: 2px;
+  }
+  .oc-kpis .oc-kpi-icon,
+  .oc-kpis .oc-kpi-sub {
+    display: none;
+  }
+  .oc-kpis .oc-kpi-label {
+    color: #5c655e !important;
+    font-weight: 400;
+    font-size: 13px;
+  }
+  .oc-kpis .oc-kpi-value {
+    font-size: 20px;
+    line-height: 1.2;
+  }
+  .oc-kpis .oc-kpi-value.text-white {
+    color: #18231c;
+  }
+}

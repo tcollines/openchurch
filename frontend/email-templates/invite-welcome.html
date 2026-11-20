@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Welcome to Open Church</title>
+<!-- Open Church welcome email for a new church's pastor. Supabase: Authentication > Emails > Invite user -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=Outfit:wght@700&display=swap');
+  body { margin: 0; padding: 0; width: 100% !important; background: #F2F3EF; }
+  table { border-collapse: collapse; }
+  img { border: 0; outline: none; text-decoration: none; }
+  a { color: #2F6B0A; }
+  @media only screen and (max-width: 620px) {
+    .container { width: 100% !important; }
+    .px { padding-left: 20px !important; padding-right: 20px !important; }
+    .h1 { font-size: 28px !important; }
+    .price { font-size: 26px !important; }
+  }
+</style>
+</head>
+<body style="margin: 0; padding: 0; background: #F2F3EF;">
+<!-- Preview text (shows next to the subject in the inbox) -->
+<div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;">
+  Your church is set up. Start using Open Church today — free for 7 days, then UGX 50,000 a month.
+</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background: #F2F3EF;">
+<tr>
+<td align="center" style="padding: 32px 12px 40px;">
+
+  <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px; background: #FFFFFF; border: 1px solid #E7EAE3; border-radius: 20px; overflow: hidden;">
+
+    <!-- Header -->
+    <tr>
+    <td class="px" style="background: #0F2418; padding: 24px 36px 30px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="vertical-align: middle; padding-right: 10px;">
+          <img src="{{ .SiteURL }}/logo.jpg" alt="Open Church" width="38" height="38" style="display: block; width: 38px; height: 38px; border-radius: 50%;">
+        </td>
+        <td style="vertical-align: middle; font-family: Outfit, Arial, sans-serif; font-size: 17px; font-weight: 700; color: #FFFFFF;">Open Church</td>
+      </tr>
+      </table>
+      <h1 class="h1" style="margin: 26px 0 0; font-family: Outfit, Arial, sans-serif; font-size: 34px; line-height: 1.12; font-weight: 700; letter-spacing: -0.02em; color: #FFFFFF;">
+        Welcome to Open Church{{ if .Data.full_name }}, {{ .Data.full_name }}{{ end }}
+      </h1>
+      <p style="margin: 12px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #C4D0C6;">
+        {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Your church{{ end }} is now set up on Open Church — attendance, giving, follow-up and reports for every department, in one place.
+      </p>
+    </td>
+    </tr>
+
+    <!-- Body -->
+    <tr>
+    <td class="px" style="padding: 26px 36px 6px;">
+
+      <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #2B352E;">
+        Click the button below to verify your email and sign in to <strong style="color: #18231C;">{{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Open Church{{ end }}</strong> with your Google account <strong style="color: #18231C;">{{ .Email }}</strong>.
+      </p>
+
+      <!-- Button (bulletproof) -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+      <tr>
+        <td align="center" bgcolor="#A3E635" style="border-radius: 16px; background: #A3E635;">
+          <!--[if mso]>
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{{ .ConfirmationURL }}" style="height:56px;v-text-anchor:middle;width:528px;" arcsize="28%" stroke="f" fillcolor="#A3E635">
+          <center style="color:#0F2418;font-family:Arial,sans-serif;font-size:17px;font-weight:bold;">Start using Open Church</center>
+          </v:roundrect>
+          <![endif]-->
+          <!--[if !mso]><!-->
+          <a href="{{ .ConfirmationURL }}" target="_blank" style="display: block; padding: 18px 20px; border-radius: 16px; font-family: Figtree, Arial, sans-serif; font-size: 17px; font-weight: 700; line-height: 20px; color: #0F2418; text-decoration: none; text-align: center;">Start using Open Church</a>
+          <!--<![endif]-->
+        </td>
+      </tr>
+      </table>
+      <p style="margin: 10px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; line-height: 1.5; color: #5C655E; text-align: center;">
+        If the button doesn’t open, <a href="{{ .ConfirmationURL }}" target="_blank" style="color: #2F6B0A; font-weight: 600;">click here to verify your email</a>.
+      </p>
+
+      <!-- Price -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 26px; background: #F1F9E6; border-radius: 18px;">
+      <tr>
+        <td style="padding: 18px 20px;">
+          <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; font-weight: 600; color: #2F6B0A;">Free for 7 days, then</p>
+          <p class="price" style="margin: 4px 0 0; font-family: Outfit, Arial, sans-serif; font-size: 30px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; color: #18231C;">
+            UGX 50,000<span style="font-family: Figtree, Arial, sans-serif; font-size: 15px; font-weight: 400; letter-spacing: 0; color: #5C655E;"> / month</span>
+          </p>
+          <p style="margin: 4px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; line-height: 1.45; color: #3E5B2A;">One price for the whole church · all 7 departments · unlimited users</p>
+        </td>
+      </tr>
+      </table>
+
+      <!-- Terms -->
+      <h2 style="margin: 28px 0 14px; font-family: Outfit, Arial, sans-serif; font-size: 18px; font-weight: 700; color: #18231C;">Free trial — terms &amp; conditions</h2>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Your free trial starts today and lasts <strong>7 days</strong>{{ if .Data.trial_ends }} (until {{ .Data.trial_ends }}){{ end }}.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Every department and every feature is open during the trial. No payment or card is needed to start.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">After the trial, Open Church costs <strong>UGX 50,000 per month</strong> for the whole church — not per user.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Pay with MTN MoMo, Airtel Money or bank transfer from the Administration dashboard.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">If a payment is missed, the app pauses until it’s paid. Your members, services and money records are never deleted.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">You can stop at any time — there is no contract.</td>
+        </tr>
+      </table>
+
+      <!-- Sign-off -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 4px;">
+      <tr>
+        <td style="padding: 16px 0 22px; border-top: 1px solid #E7EAE3; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.55; color: #5C655E;">
+          Questions? Reply to this email{{ if .Data.support_whatsapp }} or WhatsApp the Network Council on <strong style="color: #18231C;">{{ .Data.support_whatsapp }}</strong>{{ end }}.<br><br>
+          God bless,<br>
+          <strong style="color: #18231C;">The Open Church team</strong><br>
+          1000 Micro Church Network International
+        </td>
+      </tr>
+      </table>
+
+    </td>
+    </tr>
+  </table>
+
+  <!-- Footer -->
+  <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px;">
+  <tr>
+    <td style="padding: 18px 8px 0; text-align: center; font-family: Figtree, Arial, sans-serif; font-size: 12px; line-height: 1.6; color: #8A938C;">
+      You’re receiving this because {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}your church{{ end }} was added to Open Church with this email.<br>
+      Open Church · Kampala, Uganda · <a href="{{ .SiteURL }}/terms" style="color: #8A938C;">Full terms</a> · <a href="{{ .SiteURL }}/privacy" style="color: #8A938C;">Privacy</a>
+    </td>
+  </tr>
+  </table>
+
+</td>
+</tr>
+</table>
+</body>
+</html>
