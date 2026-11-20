@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
-import { MapPin, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react';
+import { MapPin, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { apiClient } from '@/services/apiClient';
 import { PlatformService } from '@/services/churchService';
@@ -41,7 +41,6 @@ export const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
-  const [emailVerifiedBadge, setEmailVerifiedBadge] = useState(false);
   const [welcomeCtx, setWelcomeCtx] = useState<WelcomeChurchContext | null>(null);
 
   const searchParams = new URLSearchParams(location.search);
@@ -144,7 +143,6 @@ export const LoginPage: React.FC = () => {
           if (ctx?.church && (!ctx.userRole || ctx.userRole === 'ADMIN')) {
             // Lead Pastor -> show their Custom Church Login Page (/get-started/:slug)
             setWelcomeCtx(ctx);
-            setEmailVerifiedBadge(true);
             window.history.replaceState(
               null,
               '',
@@ -152,7 +150,6 @@ export const LoginPage: React.FC = () => {
             );
           } else {
             // Department Head / Team Leader -> stay on the default Login Screen (/login)
-            setEmailVerifiedBadge(true);
             const emailQuery = ctx?.pastorEmail
               ? `?email=${encodeURIComponent(ctx.pastorEmail)}`
               : '';
@@ -261,14 +258,13 @@ export const LoginPage: React.FC = () => {
   };
 
   const fullChurchName = welcomeCtx?.church?.name || queryChurch || '';
-  const shortChurch = fullChurchName
-    ? churchShortName(fullChurchName, welcomeCtx?.church?.shortName)
-    : '';
+  const shortChurch = welcomeCtx?.church?.shortName?.trim()
+    ? welcomeCtx.church.shortName.trim()
+    : fullChurchName
+      ? churchShortName(fullChurchName, welcomeCtx?.church?.shortName)
+      : '';
   const displayLogo = welcomeCtx?.church?.logoUrl || '/logo.jpg';
   const displayEmail = welcomeCtx?.pastorEmail || queryEmail;
-  const locationLine = [welcomeCtx?.church?.city, welcomeCtx?.church?.country]
-    .filter(Boolean)
-    .join(', ');
 
   const googleG = (
     <svg className="w-[22px] h-[22px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -298,31 +294,29 @@ export const LoginPage: React.FC = () => {
           }}
         />
         <div className="relative h-full flex flex-col px-7 md:px-14 pt-[max(56px,env(safe-area-inset-top))] md:pt-12 pb-10 md:pb-14">
-          <span className="self-start flex items-center gap-2 pl-1 pr-3.5 py-1 rounded-full bg-[rgba(15,36,24,0.45)] backdrop-blur-[14px] border border-white/20 max-w-full">
-            <img
-              src={isCustomChurchLogin ? displayLogo : '/logo.jpg'}
-              alt="Open Church"
-              className="w-7 h-7 rounded-full object-cover shrink-0"
-            />
-            <span className="text-[13px] font-semibold text-white truncate">
-              {isCustomChurchLogin && fullChurchName ? fullChurchName : 'Open Church'}
+          {!isCustomChurchLogin && (
+            <span className="self-start flex items-center gap-2 pl-1 pr-3.5 py-1 rounded-full bg-[rgba(15,36,24,0.45)] backdrop-blur-[14px] border border-white/20 max-w-full">
+              <img
+                src="/logo.jpg"
+                alt="Open Church"
+                className="w-7 h-7 rounded-full object-cover shrink-0"
+              />
+              <span className="text-[13px] font-semibold text-white truncate">Open Church</span>
             </span>
-          </span>
+          )}
           <div className="mt-auto flex flex-col gap-2.5 max-w-[560px]">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-church-gold">
               <MapPin className="w-4 h-4 shrink-0" />
               <span className="truncate">
-                {isCustomChurchLogin && locationLine
-                  ? `${locationLine} · 1000 Micro Church Network`
-                  : '1000 Micro Church Network'}
+                {isCustomChurchLogin ? 'Invited by the Network Council' : '1000 Micro Church Network'}
               </span>
             </span>
             <h1 className="font-display text-[36px] md:text-[52px] leading-[1.06] font-bold tracking-[-0.025em] text-white">
               {isCustomChurchLogin ? (
                 <>
-                  Welcome{shortChurch ? ` to ${shortChurch}` : ' to Open Church'}.
+                  {shortChurch || 'Your church'} is ready.
                   <br />
-                  Let’s get your church ready.
+                  Let’s get you started.
                 </>
               ) : (
                 <>
@@ -332,10 +326,14 @@ export const LoginPage: React.FC = () => {
                 </>
               )}
             </h1>
-            <p className="hidden md:block text-[17px] leading-relaxed text-white/80">
-              {isCustomChurchLogin
-                ? 'Sign in with your invited Google email to review your church profile, add department heads, and activate your 7-day free trial.'
-                : 'Attendance, giving, follow-up and reports for every department — on your phone at the door and at your desk in the office.'}
+            <p
+              className={
+                isCustomChurchLogin
+                  ? 'text-[15px] md:text-[17px] leading-relaxed text-white/80'
+                  : 'hidden md:block text-[17px] leading-relaxed text-white/80'
+              }
+            >
+              Attendance, giving, follow-up and reports for every department — on your phone at the door and at your desk in the office.
             </p>
           </div>
         </div>
@@ -350,30 +348,26 @@ export const LoginPage: React.FC = () => {
             aria-hidden="true"
             className="hidden md:block w-14 h-14 rounded-full object-cover"
           />
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-church-limeSoft text-[12px] font-semibold text-church-emerald">
-                {isCustomChurchLogin ? <Sparkles className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                {isCustomChurchLogin
-                  ? emailVerifiedBadge
-                    ? 'Email Verified · 7-Day Free Trial'
-                    : 'New Church · 7-Day Free Trial'
-                  : 'Google Verified'}
-              </span>
-            </div>
+          <div className="flex flex-col gap-1.5">
+            {!isCustomChurchLogin && (
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-church-limeSoft text-[12px] font-semibold text-church-emerald">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Google Verified
+                </span>
+              </div>
+            )}
             <h2 className="font-display text-2xl md:text-[34px] font-bold tracking-[-0.01em] md:tracking-[-0.02em] leading-tight">
-              {isCustomChurchLogin && shortChurch
-                ? `Sign in to ${shortChurch}`
-                : 'Sign in with Google'}
+              {isCustomChurchLogin ? 'Sign in to get started' : 'Sign in with Google'}
             </h2>
             <p className="text-[15px] md:text-base leading-snug text-church-muted">
               {isCustomChurchLogin ? (
                 displayEmail ? (
                   <>
-                    Continue with Google using <strong className="text-church-text">{displayEmail}</strong> to open your Get Started setup.
+                    Use <strong className="font-semibold text-church-text break-all">{displayEmail}</strong> — the Google account the Network Council registered for you.
                   </>
                 ) : (
-                  <>Continue with the Google email your church was registered with to open your Get Started setup.</>
+                  <>Use the Google account the Network Council registered for you.</>
                 )
               ) : (
                 <>
@@ -412,11 +406,16 @@ export const LoginPage: React.FC = () => {
                 : 'Continue with Google'}
           </button>
 
-          <p className="m-0 text-[13px] leading-relaxed text-church-muted">
-            {isCustomChurchLogin
-              ? 'After signing in with Google, you’ll go straight to your 3-step church setup & 7-day free trial activation.'
-              : 'Signs in through Google & Supabase. Your church role and departmental permissions load automatically.'}
-          </p>
+          {isCustomChurchLogin ? (
+            <p className="m-0 flex items-start gap-2 text-[13px] leading-relaxed text-church-muted">
+              <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-church-emerald" />
+              <span>Setting up takes about 5 minutes. Your 7-day free trial starts when you finish.</span>
+            </p>
+          ) : (
+            <p className="m-0 text-[13px] leading-relaxed text-church-muted">
+              Signs in through Google &amp; Supabase. Your church role and departmental permissions load automatically.
+            </p>
+          )}
         </div>
       </div>
     </div>
