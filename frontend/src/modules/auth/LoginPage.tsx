@@ -5,6 +5,18 @@ import { useAuth } from '@/context/AuthContext';
 import { apiClient } from '@/services/apiClient';
 import { getDefaultRouteForUser } from '@/shared/formatters';
 import { Department, Tenant, User } from '@/shared/types';
+import { UserRole } from '@/shared/enums';
+
+type GetStartedInvite = { church: string; email: string };
+const GET_STARTED_KEY = 'open_church_get_started';
+const readGetStarted = (): GetStartedInvite | null => {
+  try {
+    const raw = sessionStorage.getItem(GET_STARTED_KEY);
+    return raw ? (JSON.parse(raw) as GetStartedInvite) : null;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Open Church — Live Google Sign-In powered strictly through Backend <-> Supabase OAuth.
@@ -20,6 +32,36 @@ export const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [verifyingInvite, setVerifyingInvite] = useState(false);
   const [error, setError] = useState('');
+
+  // Get started: the welcome email's link opens /get-started?church=…&email=… — only then does this
+  // page greet the new church by name. Plain /login stays the normal sign-in.
+  const isGetStarted = location.pathname === '/get-started';
+  const [invite] = useState<GetStartedInvite | null>(() => {
+    if (!isGetStarted) return readGetStarted();
+    const q = new URLSearchParams(location.search);
+    const church = q.get('church')?.trim();
+    if (!church) return readGetStarted();
+    const info = { church, email: q.get('email')?.trim() || '' };
+    try {
+      sessionStorage.setItem(GET_STARTED_KEY, JSON.stringify(info));
+    } catch {
+      /* ignore */
+    }
+    return info;
+  });
+  const showInvite = isGetStarted && !!invite;
+  // On /get-started the invite token is kept until the pastor taps "Continue with Google".
+  const [pendingInvite, setPendingInvite] = useState<{ accessToken?: string; tokenHash?: string; type: string } | null>(null);
+
+  const finishSignIn = (syncedUser: User) => {
+    const toSetup = !!readGetStarted() && syncedUser.role === UserRole.ADMIN;
+    try {
+      sessionStorage.removeItem(GET_STARTED_KEY);
+    } catch {
+      /* ignore */
+    }
+    navigate(toSetup ? '/setup' : getDefaultRouteForUser(syncedUser), { replace: true });
+  };
 
   // 1. Handle Supabase OAuth & Pastor Email Verification callback (#access_token=... or ?token_hash=...)
   useEffect(() => {
@@ -44,6 +86,13 @@ export const LoginPage: React.FC = () => {
 
       if (!accessToken && !tokenHash) return;
 
+      if (isGetStarted) {
+        // Show the Get started sign-in first; the token is used when they tap Continue.
+        setPendingInvite({ accessToken: accessToken || undefined, tokenHash: tokenHash || undefined, type: verifyType });
+        window.history.replaceState(null, '', window.location.pathname + (invite ? `?church=${encodeURIComponent(invite.church)}${invite.email ? `&email=${encodeURIComponent(invite.email)}` : ''}` : ''));
+        return;
+      }
+
       setIsLoading(true);
       setVerifyingInvite(verifyType === 'invite' || Boolean(tokenHash));
       setError('');
@@ -58,7 +107,7 @@ export const LoginPage: React.FC = () => {
         if (res?.token && res?.user) {
           const syncedUser = completeSupabaseSession(res);
           window.history.replaceState(null, '', window.location.pathname);
-          navigate(getDefaultRouteForUser(syncedUser));
+          finishSignIn(syncedUser);
         }
       } catch (err: unknown) {
         window.history.replaceState(null, '', window.location.pathname);
@@ -70,10 +119,39 @@ export const LoginPage: React.FC = () => {
     };
 
     handleSupabaseCallback();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.hash, location.search, completeSupabaseSession, navigate]);
+
+  // Get started: use the invite link's token (no second Google trip needed).
+  const continueWithInvite = async (p: { accessToken?: string; tokenHash?: string; type: string }) => {
+    setIsLoading(true);
+    setVerifyingInvite(true);
+    setError('');
+    try {
+      const res = await apiClient.post<{ token: string; user: User; tenant?: Tenant | null; departments?: Department[] }>(
+        '/auth/supabase/callback',
+        p.accessToken ? { accessToken: p.accessToken } : { tokenHash: p.tokenHash, type: p.type }
+      );
+      if (res?.token && res?.user) finishSignIn(completeSupabaseSession(res));
+    } catch (err: unknown) {
+      setPendingInvite(null);
+      setError(
+        err instanceof Error
+          ? `${err.message} Tap Continue with Google to sign in.`
+          : 'This link has expired. Tap Continue with Google to sign in.'
+      );
+    } finally {
+      setIsLoading(false);
+      setVerifyingInvite(false);
+    }
+  };
 
   // 2. Initiate live Google OAuth through Supabase via Backend
   const handleContinueWithGoogle = async () => {
+    if (pendingInvite) {
+      void continueWithInvite(pendingInvite);
+      return;
+    }
     setIsLoading(true);
     setError('');
     try {
@@ -131,12 +209,22 @@ export const LoginPage: React.FC = () => {
           </span>
           <div className="mt-auto flex flex-col gap-2.5 max-w-[560px]">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-church-gold">
-              <MapPin className="w-4 h-4" /> 1000 Micro Church Network
+              <MapPin className="w-4 h-4" /> {showInvite ? 'Invited by the Network Council' : '1000 Micro Church Network'}
             </span>
             <h1 className="font-display text-[36px] md:text-[52px] leading-[1.06] font-bold tracking-[-0.025em] text-white">
-              Welcome back.
-              <br />
-              Let’s shepherd well today.
+              {showInvite ? (
+                <>
+                  {invite!.church} is ready.
+                  <br />
+                  Let’s get you started.
+                </>
+              ) : (
+                <>
+                  Welcome back.
+                  <br />
+                  Let’s shepherd well today.
+                </>
+              )}
             </h1>
             <p className="hidden md:block text-[17px] leading-relaxed text-white/80">
               Attendance, giving, follow-up and reports for every department — on your phone at the door and at your
@@ -157,12 +245,20 @@ export const LoginPage: React.FC = () => {
               </span>
             </div>
             <h2 className="font-display text-2xl md:text-[34px] font-bold tracking-[-0.01em] md:tracking-[-0.02em] leading-tight">
-              Sign in with Google
+              {showInvite ? 'Sign in to get started' : 'Sign in with Google'}
             </h2>
-            <p className="text-[15px] md:text-base leading-snug text-church-muted">
-              Open Church authenticates securely using your Google or ministry account.
-              <span className="hidden md:inline"> Your role comes with your account.</span>
-            </p>
+            {showInvite ? (
+              <p className="text-[15px] md:text-base leading-snug text-church-muted">
+                Use{' '}
+                {invite!.email ? <b className="text-church-text font-semibold break-all">{invite!.email}</b> : 'your Google account'}{' '}
+                — the Google account the Network Council registered for you.
+              </p>
+            ) : (
+              <p className="text-[15px] md:text-base leading-snug text-church-muted">
+                Open Church authenticates securely using your Google or ministry account.
+                <span className="hidden md:inline"> Your role comes with your account.</span>
+              </p>
+            )}
           </div>
 
           {verifyingInvite && (
@@ -193,9 +289,16 @@ export const LoginPage: React.FC = () => {
                 : 'Continue with Google'}
           </button>
 
-          <p className="m-0 text-[13px] leading-relaxed text-church-muted">
-            Signs in through Google & Supabase. Your church role and departmental permissions load automatically.
-          </p>
+          {showInvite ? (
+            <p className="m-0 flex gap-2 items-start text-[13px] leading-relaxed text-church-muted">
+              <ShieldCheck className="w-4 h-4 shrink-0 mt-px text-church-emerald" />
+              Setting up takes about 5 minutes. Your 7-day free trial starts when you finish.
+            </p>
+          ) : (
+            <p className="m-0 text-[13px] leading-relaxed text-church-muted">
+              Signs in through Google & Supabase. Your church role and departmental permissions load automatically.
+            </p>
+          )}
         </div>
       </div>
     </div>

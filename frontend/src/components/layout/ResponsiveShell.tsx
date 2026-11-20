@@ -24,9 +24,8 @@ import {
 } from 'lucide-react';
 import { Avatar, initials } from '@/components/ui/kit';
 import { useAuth } from '@/context/AuthContext';
-import { PlatformService, resetDemoDatabase } from '@/services/churchService';
 import { UserRole } from '@/shared/enums';
-import { getDefaultRouteForUser, ROLE_LABELS } from '@/shared/formatters';
+import { ROLE_LABELS } from '@/shared/formatters';
 import { MobileSheet } from '@/components/ui/FormControls';
 
 export interface NavItem {
@@ -183,28 +182,22 @@ const today = () =>
   new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
 export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, tenant, loginAsUser, logout } = useAuth();
+  const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const { pathname } = useLocation();
 
   if (!user) return <>{children}</>;
 
-  const navItems = getNavItemsForRole(user.role);
+  const navItems = getNavItemsForRole(user.role).filter(
+    (item) => !(user.role === UserRole.PLATFORM_ADMIN && item.to === '/admin/overview' && !tenant)
+  );
   // Admin pages opened from More (Subscription, tools) keep the More tab highlighted.
   const moreAlias = (to: string) => to === '/admin/more' && /^\/admin\/(subscription|tools)/.test(pathname);
   // Step-by-step flows take the whole phone screen: no greeting header, no tab bar (desktop keeps the sidebar).
   const focusFlow = /^\/platform\/tenants\/new/.test(pathname);
   const showTabBar = navItems.length > 1 && !focusFlow;
-  const allUsers = PlatformService.getAllUsers();
   const deptLabel = DEPT_LABEL[user.role] ?? ROLE_LABELS[user.role];
-
-  const handleQuickSwitchUser = (targetId: string) => {
-    const nextUser = allUsers.find((u) => u.id === targetId) ?? null;
-    loginAsUser(targetId);
-    setSwitcherOpen(false);
-    if (nextUser) navigate(getDefaultRouteForUser(nextUser));
-  };
 
   const signOut = () => {
     setSwitcherOpen(false);
@@ -383,62 +376,24 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
         </nav>
       )}
 
-      {/* ── Account & demo switcher ── */}
+      {/* ── Account profile sheet ── */}
       <MobileSheet
         open={switcherOpen}
         onClose={() => setSwitcherOpen(false)}
-        title="Switch account"
-        subtitle="Demo · sign in as another person to see their department."
+        title="Your account"
+        subtitle={tenant ? tenant.name : '1000 Micro Church Network Council'}
       >
-        <div className="flex items-center gap-3 p-3 rounded-2xl bg-church-soft">
-          <Avatar name={user.fullName} size={44} />
+        <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-church-soft">
+          <Avatar name={user.fullName} size={46} />
           <span className="flex-1 min-w-0 flex flex-col">
             <span className="text-[15px] font-semibold truncate">{user.fullName}</span>
             <span className="oc-sub truncate">{user.email}</span>
+            <span className="text-xs font-semibold text-church-emerald mt-0.5">{SHORT_ROLE[user.role]}</span>
           </span>
         </div>
-        <div className="divide-y divide-church-line">
-          {allUsers.map((u) => {
-            const uTenant = PlatformService.getTenantById(u.tenantId);
-            const isCurrent = u.id === user.id;
-            return (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => handleQuickSwitchUser(u.id)}
-                className="w-full flex items-center gap-3 py-3 text-left oc-press"
-              >
-                <Avatar name={u.fullName} />
-                <span className="flex-1 min-w-0 flex flex-col">
-                  <span className="text-[15px] font-semibold truncate">{u.fullName}</span>
-                  <span className="oc-sub truncate">
-                    {SHORT_ROLE[u.role]} · {uTenant ? uTenant.name : 'All churches'}
-                  </span>
-                </span>
-                {isCurrent ? (
-                  <span className="h-6 px-2.5 rounded-full bg-church-lime text-church-forest text-xs font-bold flex items-center">You</span>
-                ) : (
-                  <ChevronRight className="w-[18px] h-[18px] text-church-faint shrink-0" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <div className="grid grid-cols-2 gap-2.5 pt-1">
-          <button
-            type="button"
-            onClick={() => {
-              resetDemoDatabase();
-              setSwitcherOpen(false);
-            }}
-            className="oc-btn-ghost"
-          >
-            <RefreshCw className="w-[18px] h-[18px]" /> Reset demo data
-          </button>
-          <button type="button" onClick={signOut} className="oc-btn bg-church-negSoft text-[#8F1D14]">
-            <LogOut className="w-[18px] h-[18px]" /> Sign out
-          </button>
-        </div>
+        <button type="button" onClick={signOut} className="oc-btn w-full bg-church-negSoft text-[#8F1D14]">
+          <LogOut className="w-[18px] h-[18px]" /> Sign out
+        </button>
       </MobileSheet>
     </div>
   );

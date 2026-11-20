@@ -56,7 +56,8 @@ export interface PastorVerificationInfo {
   message: string;
 }
 
-const STORAGE_KEY = 'open_church_multitenant_db_v1';
+const LEGACY_STORAGE_KEY = 'open_church_multitenant_db_v1';
+const STORAGE_KEY = 'open_church_multitenant_db_v2';
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -66,16 +67,18 @@ const uid = (prefix: string): string =>
 
 const loadDb = (): OpenChurchDatabase => {
   try {
+    // Purge legacy v1 demo cache if present
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       return JSON.parse(raw) as OpenChurchDatabase;
     }
   } catch (err) {
-    console.error('Failed reading Open Church local store, re-seeding:', err);
+    console.error('Failed reading Open Church local store, initializing clean store:', err);
   }
-  const seeded = buildInitialSeedDatabase();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-  return seeded;
+  const clean = buildInitialSeedDatabase();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+  return clean;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1974,4 +1977,116 @@ export const SubscriptionService = {
     });
     return payment;
   },
+};
+
+
+// ─── GET STARTED (a new church's pastor finishes setup) ───────────────────────
+
+const isOffline = (err: unknown) =>
+  /failed to fetch|networkerror|load failed/i.test(err instanceof Error ? err.message : String(err));
+
+export type ChurchProfileInput = {
+  name: string;
+  shortName: string;
+  logoUrl?: string;
+  city: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  address: string;
+  phone: string;
+  email: string;
+  launchDate: string;
+};
+
+export const SetupService = {
+  /** Saves the church info the Network Council entered (edited by the pastor). */
+  async saveChurch(tenantId: string, input: ChurchProfileInput): Promise<Tenant> {
+    const clean = {
+      ...input,
+      name: input.name.trim(),
+      shortName: input.shortName.trim(),
+      city: input.city.trim(),
+      address: input.address.trim(),
+      phone: input.phone ? formatPhoneNumber(input.phone) : '',
+      email: input.email.trim().toLowerCase(),
+    };
+    try {
+      const res = await apiClient.patch<{ tenant: Tenant }>('/setup/church', clean);
+      PlatformService.syncBackendEntities({ tenant: res.tenant });
+      return res.tenant;
+    } catch (err) {
+      if (!isOffline(err)) throw err;
+      let saved: Tenant | null = null;
+      saveDb((draft) => {
+        const t = draft.tenants.find((x) => x.id === tenantId);
+        if (t) {
+          Object.assign(t, clean, { logoUrl: clean.logoUrl || t.logoUrl });
+          saved = { ...t };
+        }
+      });
+      if (!saved) throw new Error('Church not found');
+      return saved;
+    }
+  },
+
+  /** Adds department heads; each signs in with Google using this email. */
+  async addDepartmentHeads(
+    tenantId: string,
+    heads: { code: DepartmentCode; name: string; email: string; phone: string }[]
+  ): Promise<User[]> {
+    try {
+      const res = await apiClient.post<{ users: User[] }>('/setup/department-heads', { heads });
+      PlatformService.syncBackendEntities({ users: res.users });
+      return res.users;
+    } catch (err) {
+      if (!isOffline(err)) throw err;
+      return heads.map((h) => {
+        const dept = DepartmentService.getDepartmentByCode(tenantId, h.code);
+        return PlatformService.createUser({
+          tenantId,
+          fullName: h.name,
+          email: h.email,
+          phoneNumber: h.phone,
+          role: HEAD_ROLE_BY_DEPT[h.code],
+          departmentId: dept?.id ?? null,
+        });
+      });
+    }
+  },
+
+  /** Starts the 7-day free trial from today (once). */
+  async startTrial(tenantId: string): Promise<Tenant> {
+    try {
+      const res = await apiClient.post<{ tenant: Tenant }>('/setup/start-trial');
+      PlatformService.syncBackendEntities({ tenant: res.tenant });
+      return res.tenant;
+    } catch (err) {
+      if (!isOffline(err)) throw err;
+      let saved: Tenant | null = null;
+      saveDb((draft) => {
+        const t = draft.tenants.find((x) => x.id === tenantId);
+        if (t) {
+          if (!t.setupCompletedAt) {
+            t.setupCompletedAt = new Date().toISOString();
+            t.subscriptionStatus = 'TRIALING';
+            t.trialEndsAt = new Date(Date.now() + 7 * DAY_MS).toISOString();
+          }
+          saved = { ...t };
+        }
+      });
+      if (!saved) throw new Error('Church not found');
+      return saved;
+    }
+  },
+};
+
+export const HEAD_ROLE_BY_DEPT: Record<DepartmentCode, UserRole> = {
+  [DepartmentCode.ADMIN]: UserRole.ADMIN,
+  [DepartmentCode.FINANCE]: UserRole.FINANCE_HOD,
+  [DepartmentCode.BACENTA]: UserRole.BACENTA_HOD,
+  [DepartmentCode.AIRPORT_STARS]: UserRole.AIRPORT_HOD,
+  [DepartmentCode.TELE_PASTORING]: UserRole.TELE_HOD,
+  [DepartmentCode.CHILDRENS_CHURCH]: UserRole.CHILDREN_HOD,
+  [DepartmentCode.CAMPUSES]: UserRole.CAMPUS_HOD,
 };

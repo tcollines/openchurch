@@ -23,7 +23,7 @@ import { DepartmentCode } from '@/shared/enums';
 import { Avatar, Badge, Card, DarkCard, Tile, TileTone, initials } from '@/components/ui/kit';
 
 /* Country → currency + time zone defaults */
-const COUNTRIES: { name: string; currency: string; currencyName: string; tz: string }[] = [
+export const COUNTRIES: { name: string; currency: string; currencyName: string; tz: string }[] = [
   { name: 'Uganda', currency: 'UGX', currencyName: 'Uganda shilling', tz: 'East Africa (UTC+3)' },
   { name: 'Kenya', currency: 'KES', currencyName: 'Kenya shilling', tz: 'East Africa (UTC+3)' },
   { name: 'Tanzania', currency: 'TZS', currencyName: 'Tanzania shilling', tz: 'East Africa (UTC+3)' },
@@ -36,7 +36,7 @@ const COUNTRIES: { name: string; currency: string; currencyName: string; tz: str
   { name: 'United Kingdom', currency: 'GBP', currencyName: 'Pound sterling', tz: 'London (UTC+0)' },
   { name: 'United States', currency: 'USD', currencyName: 'US dollar', tz: 'Eastern (UTC−5)' },
 ];
-const TIMEZONES = Array.from(new Set(COUNTRIES.map((c) => c.tz)));
+export const TIMEZONES = Array.from(new Set(COUNTRIES.map((c) => c.tz)));
 
 const HOD_DEPTS: { code: DepartmentCode; label: string }[] = [
   { code: DepartmentCode.FINANCE, label: 'Finance' },
@@ -49,10 +49,10 @@ const HOD_DEPTS: { code: DepartmentCode; label: string }[] = [
 
 type Person = { name: string; phone: string; email: string };
 const emptyPerson: Person = { name: '', phone: '', email: '' };
-const emailOk = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.trim());
+export const emailOk = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.trim());
 
 /* ── small form pieces ── */
-const Field: React.FC<{
+export const Field: React.FC<{
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -82,7 +82,7 @@ const Field: React.FC<{
   </label>
 );
 
-const Select: React.FC<{ label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }> = ({
+export const Select: React.FC<{ label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }> = ({
   label,
   value,
   onChange,
@@ -100,7 +100,7 @@ const Select: React.FC<{ label: string; value: string; onChange: (v: string) => 
   </label>
 );
 
-const Section: React.FC<{ icon: React.ElementType; tone: TileTone; title: string; sub: string; children: React.ReactNode }> = ({
+export const Section: React.FC<{ icon: React.ElementType; tone: TileTone; title: string; sub: string; children: React.ReactNode }> = ({
   icon,
   tone,
   title,

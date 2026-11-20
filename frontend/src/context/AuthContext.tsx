@@ -32,7 +32,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.getItem(SESSION_KEY)
   );
   const [supervisedTenantId, setSupervisedTenantId] = useState<string>(() => {
-    return localStorage.getItem(SUPERVISED_TENANT_KEY) || 't-kampala';
+    const saved = localStorage.getItem(SUPERVISED_TENANT_KEY);
+    if (saved === 't-kampala' || saved === 't-nairobi') {
+      localStorage.removeItem(SUPERVISED_TENANT_KEY);
+      return '';
+    }
+    return saved || '';
   });
 
   useEffect(() => {
@@ -45,11 +50,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const allUsers = PlatformService.getAllUsers();
   const user = userId ? allUsers.find((u) => u.id === userId) ?? null : null;
+  const availableTenants = PlatformService.getTenants();
 
   const activeTenantId =
     user?.role === UserRole.PLATFORM_ADMIN
-      ? supervisedTenantId
-      : user?.tenantId || 't-kampala';
+      ? availableTenants.some((t) => t.id === supervisedTenantId)
+        ? supervisedTenantId
+        : availableTenants[0]?.id || ''
+      : user?.tenantId || '';
 
   const tenant = PlatformService.getTenantById(activeTenantId);
 

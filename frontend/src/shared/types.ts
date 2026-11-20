@@ -36,6 +36,8 @@ export interface Tenant {
   email?: string;
   timezone?: string;
   launchDate?: string;
+  /** Set when the pastor finishes the Get started flow (starts the 7-day trial). */
+  setupCompletedAt?: string | null;
 }
 
 export interface SubscriptionPayment {

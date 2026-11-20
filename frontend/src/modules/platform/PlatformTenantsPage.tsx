@@ -109,6 +109,18 @@ export const PlatformTenantsPage: React.FC = () => {
           ]}
         />
       </Card>
+      {tenants.length === 0 ? (
+        <EmptyState
+          icon={Building2}
+          title="No churches onboarded yet"
+          sub="Add your first church to the network. It starts on a 7-day free trial and sends the pastor a verification & welcome link."
+          action={
+            <button type="button" onClick={() => navigate('/platform/tenants/new')} className="oc-btn-primary">
+              <Plus className="w-[18px] h-[18px]" /> Add first church
+            </button>
+          }
+        />
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
         {tenants.map((t) => {
           const tMembers = AttendanceAndMemberService.getMembers(t.id);
@@ -161,6 +173,7 @@ export const PlatformTenantsPage: React.FC = () => {
           );
         })}
       </div>
+      )}
 
       <MobileSheet
         open={createOpen}

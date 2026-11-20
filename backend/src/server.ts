@@ -89,7 +89,9 @@ async function sendPastorVerificationInvite(params: {
     year: 'numeric',
   });
 
-  const redirectTo = `${APP_URL}/login`;
+  // The email's "Start using Open Church" link opens the Get started sign-in for this church.
+  const shortChurch = params.churchName.replace(/^1000 Micro Church\s*[—-]\s*/, '').trim();
+  const redirectTo = `${APP_URL}/get-started?church=${encodeURIComponent(shortChurch)}&email=${encodeURIComponent(recipientEmail)}`;
   const metadata: Record<string, string> = {
     full_name: params.pastorName.trim(),
     church_name: params.churchName.trim(),
@@ -723,7 +725,19 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
       adminPassword,
       leadPastor,
       departmentHeads,
+      shortName,
+      address,
+      phone,
+      email,
+      timezone,
+      launchDate,
     } = req.body as {
+      shortName?: string;
+      address?: string;
+      phone?: string;
+      email?: string;
+      timezone?: string;
+      launchDate?: string;
       name: string;
       slug?: string;
       logoUrl?: string;
@@ -759,6 +773,12 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
           subscriptionStatus: 'TRIALING',
           monthlyFee: 50000,
           trialEndsAt,
+          shortName: shortName?.trim() || null,
+          address: address?.trim() || null,
+          phone: phone?.trim() || null,
+          email: email?.trim().toLowerCase() || null,
+          timezone: timezone || null,
+          launchDate: launchDate || null,
         },
       });
 
@@ -947,6 +967,129 @@ app.patch(
     res.json({ data: updated });
   }
 );
+
+// ─── 4b. GET STARTED: a new church's pastor finishes setting up ──────────────
+
+const requireChurchAdmin = (req: TenantRequest, res: express.Response): string | null => {
+  if (req.userRole !== 'ADMIN' || !req.tenantId) {
+    res.status(403).json({ error: 'Only the church administrator or lead pastor can do this' });
+    return null;
+  }
+  return req.tenantId;
+};
+
+const serializeTenant = <T extends { monthlyFee: unknown }>(t: T) => ({ ...t, monthlyFee: Number(t.monthlyFee) });
+
+app.patch('/api/setup/church', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = requireChurchAdmin(req, res);
+  if (!tenantId) return;
+  try {
+    const b = (req.body || {}) as Record<string, unknown>;
+    const str = (k: string) => (typeof b[k] === 'string' ? (b[k] as string).trim() : undefined);
+    const name = str('name');
+    if (name !== undefined && !name) {
+      res.status(400).json({ error: 'Church name is required' });
+      return;
+    }
+    const opt = (k: string) => {
+      const v = str(k);
+      return v === undefined ? undefined : v || null;
+    };
+    const updated = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        ...(name ? { name } : {}),
+        ...(str('logoUrl') ? { logoUrl: str('logoUrl') } : {}),
+        ...(str('currency') ? { currency: str('currency') } : {}),
+        ...(str('city') !== undefined ? { city: str('city') } : {}),
+        ...(str('country') !== undefined ? { country: str('country') } : {}),
+        shortName: opt('shortName'),
+        address: opt('address'),
+        phone: opt('phone'),
+        email: opt('email')?.toLowerCase() ?? opt('email'),
+        timezone: opt('timezone'),
+        launchDate: opt('launchDate'),
+      },
+    });
+    res.json({ tenant: serializeTenant(updated) });
+  } catch (err: unknown) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not save church info' });
+  }
+});
+
+app.post('/api/setup/department-heads', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = requireChurchAdmin(req, res);
+  if (!tenantId) return;
+  try {
+    const { heads } = (req.body || {}) as {
+      heads?: { code: DepartmentCode; name: string; email: string; phone?: string }[];
+    };
+    if (!Array.isArray(heads) || heads.length === 0) {
+      res.status(400).json({ error: 'Add at least one department head' });
+      return;
+    }
+    const departments = await prisma.department.findMany({ where: { tenantId } });
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
+    const created = [];
+    for (const h of heads) {
+      const hEmail = h.email?.trim().toLowerCase();
+      const dept = departments.find((d) => d.code === h.code);
+      const role = HOD_ROLE_BY_DEPT[h.code];
+      if (!h.name?.trim() || !hEmail || !dept || !role) {
+        res.status(400).json({ error: 'Each head needs a name, a Google email and a department' });
+        return;
+      }
+      const existing = await prisma.user.findUnique({ where: { email: hEmail } });
+      if (existing) {
+        res.status(409).json({ error: `${hEmail} already has an Open Church login` });
+        return;
+      }
+      const u = await prisma.user.create({
+        data: {
+          tenantId,
+          fullName: h.name.trim(),
+          email: hEmail,
+          passwordHash,
+          phoneNumber: h.phone?.trim() || '',
+          role,
+          departmentId: dept.id,
+        },
+      });
+      const { passwordHash: _pw, ...safe } = u;
+      void _pw;
+      created.push(safe);
+    }
+    res.status(201).json({ users: created });
+  } catch (err: unknown) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not add department heads' });
+  }
+});
+
+app.post('/api/setup/start-trial', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = requireChurchAdmin(req, res);
+  if (!tenantId) return;
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) {
+      res.status(404).json({ error: 'Church not found' });
+      return;
+    }
+    // The 7-day trial starts when the pastor finishes setup (only once).
+    const updated = tenant.setupCompletedAt
+      ? tenant
+      : await prisma.tenant.update({
+          where: { id: tenantId },
+          data: {
+            setupCompletedAt: new Date(),
+            subscriptionStatus: 'TRIALING',
+            trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          },
+        });
+    res.json({ tenant: serializeTenant(updated) });
+  } catch (err: unknown) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not start the free trial' });
+  }
+});
 
 // ─── 5. MEMBERS, CHILDREN, SERVICES & CHECK-IN (AIRPORT STARS & KIDS) ─────────
 

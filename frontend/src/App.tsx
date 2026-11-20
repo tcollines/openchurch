@@ -12,6 +12,7 @@ import { AirportStarsModule } from '@/modules/airport-stars/AirportStarsModule';
 import { TelePastoringModule } from '@/modules/tele-pastoring/TelePastoringModule';
 import { ChildrensChurchModule } from '@/modules/childrens-church/ChildrensChurchModule';
 import { SubscriptionLock } from '@/modules/billing/SubscriptionLock';
+import { SetupPage } from '@/modules/setup/SetupPage';
 import { SubscriptionService } from '@/services/churchService';
 import { FellowshipUnitType, UserRole } from '@/shared/enums';
 import { getDefaultRouteForUser } from '@/shared/formatters';
@@ -68,6 +69,9 @@ const AppRoutes: React.FC = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Get started: the welcome email's link → sign in → set up the new church */}
+      <Route path="/get-started" element={<LoginPage />} />
+      <Route path="/setup" element={<SetupPage />} />
 
       {/* Multi-Tenant Network Council */}
       <Route
