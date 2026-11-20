@@ -1,7 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/((?!assets/|logo\\.jpg|signin-crowd\\.jpg).*)",
+      "source": "/api/:path*",
+      "destination": "https://openchurch.onrender.com/api/:path*"
+    },
+    {
+      "source": "/((?!api/|assets/|logo\\.jpg|signin-crowd\\.jpg).*)",
       "destination": "/index.html"
     }
   ]

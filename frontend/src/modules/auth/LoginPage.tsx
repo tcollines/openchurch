@@ -77,7 +77,10 @@ export const LoginPage: React.FC = () => {
     setIsLoading(true);
     setError('');
     try {
-      const res = await apiClient.get<{ url: string }>('/auth/supabase/google-url');
+      const currentOrigin = window.location.origin;
+      const res = await apiClient.get<{ url: string }>(
+        `/auth/supabase/google-url?origin=${encodeURIComponent(currentOrigin)}`
+      );
       if (res?.url) {
         window.location.assign(res.url);
         return;

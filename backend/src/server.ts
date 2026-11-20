@@ -281,7 +281,14 @@ async function verifySupabaseAccessToken(accessToken: string): Promise<{
 
 // Retrieve Supabase-hosted Google OAuth initiation URL
 app.get('/api/auth/supabase/google-url', async (req, res) => {
-  const origin = req.headers.origin || process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+  const queryOrigin = typeof req.query.origin === 'string' ? req.query.origin.trim() : '';
+  const origin = (
+    queryOrigin ||
+    req.headers.origin ||
+    process.env.APP_URL ||
+    process.env.FRONTEND_ORIGIN ||
+    'http://localhost:5173'
+  ).replace(/\/+$/, '');
   const redirectUrl = `${origin}/login`;
   const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&prompt=select_account`;
 

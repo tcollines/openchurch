@@ -6,6 +6,15 @@
  */
 
 const normalizeApiBaseUrl = (raw?: string): string => {
+  // In production on Vercel, route through same-origin /api rewrite proxy so
+  // ISP/router DNS caching on *.onrender.com and cross-origin preflights never fail.
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return '/api';
+  }
   const trimmed = (raw || '').trim().replace(/\/+$/, '');
   if (!trimmed) return 'http://localhost:5000/api';
   return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
@@ -42,7 +51,7 @@ async function request<T>(
   const token = getStoredToken();
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     ...(options?.headers || {}),
   };
 
