@@ -5,8 +5,13 @@
  * Node.js Express backend. The frontend NEVER accesses Supabase directly.
  */
 
-const API_BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:5000/api';
+const normalizeApiBaseUrl = (raw?: string): string => {
+  const trimmed = (raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return 'http://localhost:5000/api';
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+};
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL as string | undefined);
 
 const TOKEN_KEY = 'open_church_auth_token';
 

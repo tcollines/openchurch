@@ -17,9 +17,29 @@ import {
 dotenv.config();
 
 const app = express();
+const allowedOrigins = (process.env.FRONTEND_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, '').toLowerCase())
+  .filter((o) => o && o !== '*');
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN || '*',
+    origin: (requestOrigin, callback) => {
+      if (!requestOrigin || allowedOrigins.length === 0) {
+        callback(null, true);
+        return;
+      }
+      const normalized = requestOrigin.replace(/\/+$/, '').toLowerCase();
+      if (
+        allowedOrigins.includes(normalized) ||
+        normalized.endsWith('.vercel.app') ||
+        normalized.startsWith('http://localhost:')
+      ) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Origin ${requestOrigin} not allowed by CORS`));
+    },
     credentials: true,
   })
 );
