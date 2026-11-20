@@ -24,7 +24,7 @@
 </head>
 <body style="margin: 0; padding: 0; background: #F2F3EF;">
 <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;">
-  {{ if eq .Data.invite_type "HOD" }}You have been invited to serve on Open Church. Sign in with your Google account to open your department.{{ else }}Your church is set up on Open Church — start your 7-day free trial today.{{ end }}
+  {{ if and .Data (eq (printf "%v" .Data.invite_type) "HOD") }}You have been invited to serve on Open Church. Sign in with your Google account to open your department.{{ else }}Your church is set up on Open Church — start your 7-day free trial today.{{ end }}
 </div>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background: #F2F3EF;">
@@ -48,7 +48,7 @@
         Welcome to Open Church{{ if .Data.full_name }}, {{ .Data.full_name }}{{ end }}
       </h1>
       <p style="margin: 12px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #C4D0C6;">
-        {{ if eq .Data.invite_type "HOD" }}
+        {{ if and .Data (eq (printf "%v" .Data.invite_type) "HOD") }}
           You’ve been added as <strong>{{ if .Data.role_label }}{{ .Data.role_label }}{{ else }}a Department Leader{{ end }}</strong> at {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}your church{{ end }}.
         {{ else }}
           {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Your church{{ end }} is now set up on Open Church — attendance, giving, follow-up and reports for every department, in one place.
@@ -61,7 +61,7 @@
     <tr>
     <td class="px" style="padding: 26px 36px 6px;">
 
-      {{ if eq .Data.invite_type "HOD" }}
+      {{ if and .Data (eq (printf "%v" .Data.invite_type) "HOD") }}
       <!-- ════════════ DEPARTMENT HEAD / TEAM LEADER INVITE ════════════ -->
       <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #2B352E;">
         Click the button below to verify your email and sign in with your Google account <strong style="color: #18231C;">{{ .Email }}</strong> to open your department dashboard.

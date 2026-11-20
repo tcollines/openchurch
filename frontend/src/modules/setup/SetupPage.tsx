@@ -9,6 +9,7 @@ import {
   Check,
   CheckCircle2,
   ChevronLeft,
+  Copy,
   GraduationCap,
   Home,
   Loader2,
@@ -19,6 +20,7 @@ import {
   PhoneCall,
   Plane,
   Plus,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   UserPlus,
@@ -29,6 +31,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
 import {
+  DepartmentInviteResult,
   DepartmentService,
   HEAD_ROLE_BY_DEPT,
   PlatformService,
@@ -544,6 +547,9 @@ const HeadsStep: React.FC<{ tenant: Tenant; user: User; onAdded: (names: string[
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [inviteStatusByEmail, setInviteStatusByEmail] = useState<Record<string, DepartmentInviteResult>>({});
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const added = DEPTS.filter((d) => headFor(d.code)).length;
   const taken = new Set(users.map((u) => u.email.toLowerCase()));
@@ -569,7 +575,18 @@ const HeadsStep: React.FC<{ tenant: Tenant; user: User; onAdded: (names: string[
     setBusy(true);
     setError('');
     try {
-      await SetupService.addDepartmentHeads(tenant.id, [{ code, name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim() }]);
+      const res = await SetupService.addDepartmentHeads(tenant.id, [
+        { code, name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim() },
+      ]);
+      if (res.invites.length > 0) {
+        setInviteStatusByEmail((prev) => {
+          const nextMap = { ...prev };
+          for (const inv of res.invites) {
+            nextMap[inv.recipientEmail.toLowerCase()] = inv;
+          }
+          return nextMap;
+        });
+      }
       onAdded([form.name.trim()]);
       const next = DEPTS.find((d) => d.code !== code && !headFor(d.code))?.code ?? null;
       setOpen(null);
@@ -580,6 +597,41 @@ const HeadsStep: React.FC<{ tenant: Tenant; user: User; onAdded: (names: string[
       setError(err instanceof Error ? err.message : 'Could not add this head. Try again.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleResendInvite = async (head: User) => {
+    setResendingId(head.id);
+    try {
+      const inv = await SetupService.resendDepartmentHeadInvite(head.id);
+      setInviteStatusByEmail((prev) => ({
+        ...prev,
+        [head.email.toLowerCase()]: inv,
+      }));
+    } catch (err) {
+      setInviteStatusByEmail((prev) => ({
+        ...prev,
+        [head.email.toLowerCase()]: {
+          sent: false,
+          recipientEmail: head.email,
+          signInUrl: `${window.location.origin}/login?email=${encodeURIComponent(head.email)}`,
+          message: err instanceof Error ? err.message : 'Could not resend invite email.',
+        },
+      }));
+    } finally {
+      setResendingId(null);
+    }
+  };
+
+  const handleCopySignInLink = async (head: User) => {
+    const inv = inviteStatusByEmail[head.email.toLowerCase()];
+    const url = inv?.signInUrl || `${window.location.origin}/login?email=${encodeURIComponent(head.email)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedId(head.id);
+      setTimeout(() => setCopiedId((prev) => (prev === head.id ? null : prev)), 2500);
+    } catch {
+      window.prompt('Copy department head sign-in link:', url);
     }
   };
 
@@ -595,20 +647,54 @@ const HeadsStep: React.FC<{ tenant: Tenant; user: User; onAdded: (names: string[
       <div className="-mt-1 divide-y divide-church-line">
         {DEPTS.map((d) => {
           const head = headFor(d.code);
-          if (head)
+          if (head) {
+            const inv = inviteStatusByEmail[head.email.toLowerCase()];
+            const isResending = resendingId === head.id;
+            const isCopied = copiedId === head.id;
             return (
-              <Row
-                key={d.code}
-                lead={<Tile icon={d.icon} tone={d.tone} />}
-                title={d.label}
-                sub={`${head.fullName} · ${head.email}`}
-                trail={
-                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-church-pos shrink-0">
-                    <Check className="w-4 h-4" strokeWidth={2.5} /> Added
+              <div key={d.code} className="py-3 flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <Tile icon={d.icon} tone={d.tone} />
+                  <span className="flex-1 min-w-0 flex flex-col">
+                    <span className="text-[15px] font-semibold truncate">{d.label}</span>
+                    <span className="oc-sub truncate">{head.fullName} · {head.email}</span>
                   </span>
-                }
-              />
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-church-pos shrink-0">
+                    <Check className="w-4 h-4" strokeWidth={2.5} /> {inv?.sent ? 'Email sent' : 'Added'}
+                  </span>
+                </div>
+                {inv && !inv.sent && (
+                  <div className="flex gap-2 items-start px-3 py-2 rounded-xl bg-[#FCEFD9] text-[#7A4300] text-xs leading-relaxed">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{inv.message}</span>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-3 pl-[52px] text-xs font-semibold">
+                  <button
+                    type="button"
+                    disabled={isResending}
+                    onClick={() => void handleResendInvite(head)}
+                    className="inline-flex items-center gap-1 text-church-emerald hover:underline disabled:opacity-60"
+                  >
+                    {isResending ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    )}
+                    {isResending ? 'Sending email…' : 'Resend email'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopySignInLink(head)}
+                    className="inline-flex items-center gap-1 text-church-muted hover:text-church-text"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {isCopied ? 'Link copied!' : 'Copy sign-in link'}
+                  </button>
+                </div>
+              </div>
             );
+          }
           if (open === d.code)
             return (
               <div key={d.code} className="py-3.5 flex flex-col gap-3">

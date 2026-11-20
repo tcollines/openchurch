@@ -84,6 +84,79 @@ function formatSupabaseKeyError(rawMessage: string, key: string): string {
   return `${rawMessage} — Re-copy SUPABASE_SERVICE_ROLE_KEY (Secret / service_role key, without quotes) from Supabase → Project Settings → API Keys into Render → Environment.`;
 }
 
+function formatSupabaseInviteError(rawMessage: string, recipientEmail: string, key: string): string {
+  if (/invalid api key|not allowed|jwt/i.test(rawMessage)) {
+    return formatSupabaseKeyError(rawMessage, key);
+  }
+  if (/rate limit|over_email_send_rate_limit|too many requests/i.test(rawMessage)) {
+    return 'Supabase email rate limit reached (default built-in SMTP only sends 2 emails/hour). Enable Custom SMTP in Supabase → Authentication → SMTP Settings to email all department heads.';
+  }
+  if (/not authorized|email_address_not_authorized/i.test(rawMessage)) {
+    return `Supabase default SMTP only delivers emails to members of your Supabase organization (${recipientEmail} is an external address). Enable Custom SMTP in Supabase → Authentication → SMTP Settings.`;
+  }
+  return rawMessage;
+}
+
+function resolveFrontendOrigin(req: express.Request): string {
+  const refererOrigin = (() => {
+    const ref = typeof req.headers.referer === 'string' ? req.headers.referer.trim() : '';
+    if (!ref) return '';
+    try {
+      return new URL(ref).origin;
+    } catch {
+      return '';
+    }
+  })();
+
+  const candidates = [
+    typeof req.headers.origin === 'string' ? req.headers.origin : '',
+    refererOrigin,
+    cleanEnv(process.env.APP_URL),
+    cleanEnv(process.env.FRONTEND_ORIGIN),
+    'https://openchurchms.vercel.app',
+  ];
+
+  for (const c of candidates) {
+    const normalized = c.trim().replace(/\/+$/, '');
+    if (
+      normalized &&
+      !normalized.includes('onrender.com') &&
+      !normalized.includes('localhost:')
+    ) {
+      return normalized;
+    }
+  }
+
+  for (const c of candidates) {
+    const normalized = c.trim().replace(/\/+$/, '');
+    if (normalized && !normalized.includes('onrender.com')) {
+      return normalized;
+    }
+  }
+
+  return 'https://openchurchms.vercel.app';
+}
+
+async function clearUnconfirmedSupabaseAuthUser(email: string): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  try {
+    const rows = await prisma.$queryRawUnsafe<
+      { id: string; email_confirmed_at: Date | null; last_sign_in_at: Date | null }[]
+    >(
+      'SELECT id, email_confirmed_at, last_sign_in_at FROM auth.users WHERE lower(email) = $1 LIMIT 1',
+      email.trim().toLowerCase()
+    );
+    const existingAuth = rows?.[0];
+    if (existingAuth && !existingAuth.email_confirmed_at && !existingAuth.last_sign_in_at) {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(existingAuth.id);
+      return !error;
+    }
+  } catch (err) {
+    console.warn('[Invite] Could not inspect auth.users for re-invite:', err);
+  }
+  return false;
+}
+
 const supabase = SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -143,10 +216,21 @@ async function sendPastorVerificationInvite(params: {
     metadata.support_whatsapp = SUPPORT_WHATSAPP.trim();
   }
 
-  const { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+  let { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
     redirectTo,
     data: metadata,
   });
+
+  if (inviteErr && /already|registered|exists/i.test(inviteErr.message)) {
+    const cleared = await clearUnconfirmedSupabaseAuthUser(recipientEmail);
+    if (cleared) {
+      const retry = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+        redirectTo,
+        data: metadata,
+      });
+      inviteErr = retry.error;
+    }
+  }
 
   if (!inviteErr) {
     return {
@@ -158,7 +242,7 @@ async function sendPastorVerificationInvite(params: {
     };
   }
 
-  // If the pastor already exists in Supabase auth.users, send an OTP / sign-in verification link instead
+  // If the pastor already confirmed & signed in before, send an OTP / sign-in verification link instead
   if (/already|registered|exists/i.test(inviteErr.message)) {
     const authClient = supabase || supabaseAdmin;
     const { error: otpErr } = await authClient.auth.signInWithOtp({
@@ -182,7 +266,7 @@ async function sendPastorVerificationInvite(params: {
       status: 'FAILED',
       recipientEmail,
       welcomeUrl: redirectTo,
-      message: otpErr.message,
+      message: formatSupabaseInviteError(otpErr.message, recipientEmail, SUPABASE_SERVICE_ROLE_KEY),
     };
   }
 
@@ -191,7 +275,7 @@ async function sendPastorVerificationInvite(params: {
     status: 'FAILED',
     recipientEmail,
     welcomeUrl: redirectTo,
-    message: formatSupabaseKeyError(inviteErr.message, SUPABASE_SERVICE_ROLE_KEY),
+    message: formatSupabaseInviteError(inviteErr.message, recipientEmail, SUPABASE_SERVICE_ROLE_KEY),
   };
 }
 
@@ -220,19 +304,22 @@ async function sendDepartmentLeaderInvite(params: {
   role: UserRole;
   tenantId: string;
   appOrigin?: string;
-}): Promise<{ sent: boolean; recipientEmail: string; message: string }> {
+}): Promise<{ sent: boolean; recipientEmail: string; signInUrl: string; message: string }> {
   const recipientEmail = params.email.trim().toLowerCase();
+  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
+  // Clean path without query params so Supabase Redirect URL allowlist always matches
+  const redirectTo = `${baseAppUrl}/login`;
+  const signInUrl = `${baseAppUrl}/login?email=${encodeURIComponent(recipientEmail)}`;
+
   if (!supabaseAdmin) {
     return {
       sent: false,
       recipientEmail,
-      message: 'SUPABASE_SERVICE_ROLE_KEY not configured in backend/.env',
+      signInUrl,
+      message: 'SUPABASE_SERVICE_ROLE_KEY not configured on backend server.',
     };
   }
 
-  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
-  // Department heads & team members land on the default /login screen (NOT the custom pastor /get-started/:slug page)
-  const redirectTo = `${baseAppUrl}/login?email=${encodeURIComponent(recipientEmail)}`;
   const metadata: Record<string, string> = {
     invite_type: 'HOD',
     full_name: params.fullName.trim(),
@@ -248,13 +335,30 @@ async function sendDepartmentLeaderInvite(params: {
     metadata.support_whatsapp = SUPPORT_WHATSAPP.trim();
   }
 
-  const { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+  let { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
     redirectTo,
     data: metadata,
   });
 
+  if (inviteErr && /already|registered|exists/i.test(inviteErr.message)) {
+    const cleared = await clearUnconfirmedSupabaseAuthUser(recipientEmail);
+    if (cleared) {
+      const retry = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+        redirectTo,
+        data: metadata,
+      });
+      inviteErr = retry.error;
+    }
+  }
+
   if (!inviteErr) {
-    return { sent: true, recipientEmail, message: `Invite sent to ${recipientEmail}` };
+    console.log(`[Invite] Department head invite dispatched to ${recipientEmail} (${metadata.role_label})`);
+    return {
+      sent: true,
+      recipientEmail,
+      signInUrl,
+      message: `Invite email sent to ${recipientEmail}`,
+    };
   }
 
   if (/already|registered|exists/i.test(inviteErr.message)) {
@@ -264,12 +368,30 @@ async function sendDepartmentLeaderInvite(params: {
       options: { emailRedirectTo: redirectTo, data: metadata },
     });
     if (!otpErr) {
-      return { sent: true, recipientEmail, message: `Sign-in link sent to ${recipientEmail}` };
+      console.log(`[Invite] Department head sign-in link dispatched to ${recipientEmail}`);
+      return {
+        sent: true,
+        recipientEmail,
+        signInUrl,
+        message: `Sign-in link sent to ${recipientEmail}`,
+      };
     }
-    return { sent: false, recipientEmail, message: otpErr.message };
+    const formattedOtpErr = formatSupabaseInviteError(
+      otpErr.message,
+      recipientEmail,
+      SUPABASE_SERVICE_ROLE_KEY
+    );
+    console.warn(`[Invite] OTP failed for ${recipientEmail}: ${otpErr.message}`);
+    return { sent: false, recipientEmail, signInUrl, message: formattedOtpErr };
   }
 
-  return { sent: false, recipientEmail, message: inviteErr.message };
+  const formattedErr = formatSupabaseInviteError(
+    inviteErr.message,
+    recipientEmail,
+    SUPABASE_SERVICE_ROLE_KEY
+  );
+  console.warn(`[Invite] Invite failed for ${recipientEmail}: ${inviteErr.message}`);
+  return { sent: false, recipientEmail, signInUrl, message: formattedErr };
 }
 
 const CORE_DEPARTMENTS: { code: DepartmentCode; name: string; description: string }[] = [
@@ -1116,9 +1238,7 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
         ? { name: leadPastor.name.trim(), email: leadPastor.email.trim() }
         : { name: String(adminName).trim(), email: String(adminEmail).trim() };
 
-    const reqOrigin =
-      (req.headers.origin as string | undefined) ||
-      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+    const reqOrigin = resolveFrontendOrigin(req);
 
     const verification = await sendPastorVerificationInvite({
       pastorName: pastorTarget.name,
@@ -1313,9 +1433,7 @@ app.post('/api/setup/department-heads', requireTenantAuth, async (req: TenantReq
       prisma.tenant.findUnique({ where: { id: tenantId } }),
       prisma.department.findMany({ where: { tenantId } }),
     ]);
-    const reqOrigin =
-      (req.headers.origin as string | undefined) ||
-      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+    const reqOrigin = resolveFrontendOrigin(req);
     const passwordHash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
     const created = [];
     const invites = [];
@@ -1366,6 +1484,56 @@ app.post('/api/setup/department-heads', requireTenantAuth, async (req: TenantReq
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not add department heads' });
   }
 });
+
+app.post(
+  '/api/setup/department-heads/:userId/resend-invite',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    try {
+      const userId = String(req.params.userId || '').trim();
+      const targetUser = await prisma.user.findUnique({ where: { id: userId } });
+      if (!targetUser || !targetUser.tenantId) {
+        res.status(404).json({ error: 'Department head not found' });
+        return;
+      }
+
+      const canManage =
+        req.userRole === 'PLATFORM_ADMIN' ||
+        (req.userRole === 'ADMIN' && req.tenantId === targetUser.tenantId);
+      if (!canManage) {
+        res.status(403).json({ error: 'Only the church administrator or lead pastor can resend invites' });
+        return;
+      }
+
+      const [tenant, dept] = await Promise.all([
+        prisma.tenant.findUnique({ where: { id: targetUser.tenantId } }),
+        targetUser.departmentId
+          ? prisma.department.findUnique({ where: { id: targetUser.departmentId } })
+          : Promise.resolve(null),
+      ]);
+      if (!tenant) {
+        res.status(404).json({ error: 'Church not found' });
+        return;
+      }
+
+      const invite = await sendDepartmentLeaderInvite({
+        fullName: targetUser.fullName,
+        email: targetUser.email,
+        churchName: tenant.name,
+        departmentName: dept?.name,
+        role: targetUser.role,
+        tenantId: tenant.id,
+        appOrigin: resolveFrontendOrigin(req),
+      });
+
+      res.json({ invite });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Could not resend department head invite',
+      });
+    }
+  }
+);
 
 app.post('/api/setup/start-trial', requireTenantAuth, async (req: TenantRequest, res) => {
   const tenantId = requireChurchAdmin(req, res);
@@ -1441,9 +1609,7 @@ app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
       },
     });
 
-    const reqOrigin =
-      (req.headers.origin as string | undefined) ||
-      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+    const reqOrigin = resolveFrontendOrigin(req);
 
     const invite = tenant
       ? await sendDepartmentLeaderInvite({

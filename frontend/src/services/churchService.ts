@@ -2020,6 +2020,13 @@ export type ChurchProfileInput = {
   launchDate: string;
 };
 
+export interface DepartmentInviteResult {
+  sent: boolean;
+  recipientEmail: string;
+  signInUrl?: string;
+  message: string;
+}
+
 export const SetupService = {
   /** Saves the church info the Network Council entered (edited by the pastor). */
   async saveChurch(tenantId: string, input: ChurchProfileInput): Promise<Tenant> {
@@ -2051,18 +2058,21 @@ export const SetupService = {
     }
   },
 
-  /** Adds department heads; each signs in with Google using this email. */
+  /** Adds department heads; each signs in with Google using this email and receives an invite email. */
   async addDepartmentHeads(
     tenantId: string,
     heads: { code: DepartmentCode; name: string; email: string; phone: string }[]
-  ): Promise<User[]> {
+  ): Promise<{ users: User[]; invites: DepartmentInviteResult[] }> {
     try {
-      const res = await apiClient.post<{ users: User[] }>('/setup/department-heads', { heads });
+      const res = await apiClient.post<{ users: User[]; invites?: DepartmentInviteResult[] }>(
+        '/setup/department-heads',
+        { heads }
+      );
       PlatformService.syncBackendEntities({ users: res.users });
-      return res.users;
+      return { users: res.users, invites: res.invites ?? [] };
     } catch (err) {
       if (!isOffline(err)) throw err;
-      return heads.map((h) => {
+      const users = heads.map((h) => {
         const dept = DepartmentService.getDepartmentByCode(tenantId, h.code);
         return PlatformService.createUser({
           tenantId,
@@ -2073,7 +2083,22 @@ export const SetupService = {
           departmentId: dept?.id ?? null,
         });
       });
+      const invites: DepartmentInviteResult[] = users.map((u) => ({
+        sent: false,
+        recipientEmail: u.email,
+        signInUrl: `${window.location.origin}/login?email=${encodeURIComponent(u.email)}`,
+        message: 'Saved offline — backend was unreachable so the invite email was not sent.',
+      }));
+      return { users, invites };
     }
+  },
+
+  /** Resends the department head welcome email for an already-added leader. */
+  async resendDepartmentHeadInvite(userId: string): Promise<DepartmentInviteResult> {
+    const res = await apiClient.post<{ invite: DepartmentInviteResult }>(
+      `/setup/department-heads/${encodeURIComponent(userId)}/resend-invite`
+    );
+    return res.invite;
   },
 
   /** Starts the 7-day free trial from today (once). */
