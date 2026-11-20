@@ -45,11 +45,44 @@ app.use(
 );
 app.use(express.json({ limit: '5mb' }));
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myntqhkgeyxkmxypezvu.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const APP_URL = (process.env.APP_URL || process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
-const SUPPORT_WHATSAPP = process.env.SUPPORT_WHATSAPP || '';
+const cleanEnv = (v?: string): string =>
+  (v || '')
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\s+/g, '');
+
+const SUPABASE_URL = cleanEnv(process.env.SUPABASE_URL) || 'https://myntqhkgeyxkmxypezvu.supabase.co';
+const SUPABASE_ANON_KEY = cleanEnv(process.env.SUPABASE_ANON_KEY);
+const SUPABASE_SERVICE_ROLE_KEY = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
+const APP_URL = (cleanEnv(process.env.APP_URL) || cleanEnv(process.env.FRONTEND_ORIGIN) || 'http://localhost:5173').replace(/\/$/, '');
+const SUPPORT_WHATSAPP = (process.env.SUPPORT_WHATSAPP || '').trim().replace(/^["']+|["']+$/g, '');
+
+function formatSupabaseKeyError(rawMessage: string, key: string): string {
+  if (!/invalid api key|not allowed|jwt/i.test(rawMessage)) {
+    return rawMessage;
+  }
+  if (!key || /^your-|^replace-/i.test(key)) {
+    return 'SUPABASE_SERVICE_ROLE_KEY on Render still has a placeholder value. Paste your real service_role / sb_secret_ key from Supabase → Project Settings → API Keys.';
+  }
+  if (key.startsWith('sb_publishable_')) {
+    return 'SUPABASE_SERVICE_ROLE_KEY on Render has your public publishable key (sb_publishable_...). Replace it with your Secret key (sb_secret_... or service_role) from Supabase → Project Settings → API Keys.';
+  }
+  if (/^(re_|SG\.|xkeysib-)/i.test(key)) {
+    return 'SUPABASE_SERVICE_ROLE_KEY on Render has an SMTP key instead of your Supabase key. Paste your Supabase Secret / service_role key from Supabase → Project Settings → API Keys.';
+  }
+  if (key.startsWith('eyJ')) {
+    const decoded = jwt.decode(key) as { role?: string; ref?: string } | null;
+    if (decoded?.role === 'anon') {
+      return 'SUPABASE_SERVICE_ROLE_KEY on Render has the anon public key instead of the service_role secret key. Copy the service_role secret key from Supabase → Project Settings → API Keys.';
+    }
+    if (decoded?.ref && !SUPABASE_URL.includes(decoded.ref)) {
+      return `SUPABASE_SERVICE_ROLE_KEY belongs to project "${decoded.ref}", which does not match SUPABASE_URL.`;
+    }
+  } else if (!key.startsWith('sb_secret_')) {
+    return 'SUPABASE_SERVICE_ROLE_KEY on Render is not a valid Supabase secret key (must start with sb_secret_... or eyJ...). Re-copy it without quotes from Supabase → Project Settings → API Keys.';
+  }
+  return `${rawMessage} — Re-copy SUPABASE_SERVICE_ROLE_KEY (Secret / service_role key, without quotes) from Supabase → Project Settings → API Keys into Render → Environment.`;
+}
 
 const supabase = SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
@@ -158,7 +191,7 @@ async function sendPastorVerificationInvite(params: {
     status: 'FAILED',
     recipientEmail,
     welcomeUrl: redirectTo,
-    message: inviteErr.message,
+    message: formatSupabaseKeyError(inviteErr.message, SUPABASE_SERVICE_ROLE_KEY),
   };
 }
 

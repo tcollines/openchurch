@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Building2,
-  ExternalLink,
+  Check,
+  Copy,
+  Mail,
   Plus,
   Power,
-  Users,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Avatar,
@@ -63,9 +65,33 @@ export const PlatformTenantsPage: React.FC = () => {
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [inviteStatus, setInviteStatus] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
   const tenants = PlatformService.getTenants();
   const allUsers = PlatformService.getAllUsers();
+
+  const handleResendForTenant = async (tenantId: string) => {
+    setResendingId(tenantId);
+    try {
+      const v = await PlatformService.resendPastorInvite(tenantId);
+      setInviteStatus((prev) => ({
+        ...prev,
+        [tenantId]: { ok: v.sent, msg: v.message },
+      }));
+    } catch (err) {
+      setInviteStatus((prev) => ({
+        ...prev,
+        [tenantId]: {
+          ok: false,
+          msg: err instanceof Error ? err.message : 'Failed resending invite',
+        },
+      }));
+    } finally {
+      setResendingId(null);
+    }
+  };
 
   const handleProvisionTenant = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,7 +159,9 @@ export const PlatformTenantsPage: React.FC = () => {
               <div className="flex items-center gap-3">
                 <img src={t.logoUrl || '/logo.jpg'} alt="" className="w-12 h-12 rounded-full object-cover shrink-0" />
                 <span className="flex-1 min-w-0 flex flex-col">
-                  <span className="font-display text-lg font-semibold truncate">{t.name.replace(/^1000 Micro Church\s*[—-]\s*/, '')}</span>
+                  <span className="font-display text-lg font-semibold truncate">
+                    {t.shortName || t.name.replace(/^1000 Micro Church\s*[—-]\s*/, '')}
+                  </span>
                   <span className="oc-sub truncate">
                     {t.city}, {t.country} · {t.currency}
                   </span>
@@ -149,6 +177,42 @@ export const PlatformTenantsPage: React.FC = () => {
                     { label: 'Logins', value: tUsers.length },
                   ]}
                 />
+              </div>
+              {inviteStatus[t.id] && (
+                <div
+                  className={`px-3 py-2.5 rounded-[12px] text-xs font-medium flex items-start gap-2 ${
+                    inviteStatus[t.id].ok
+                      ? 'bg-church-limeSoft text-[#1F4A08]'
+                      : 'bg-church-warnSoft text-[#7A4300]'
+                  }`}
+                >
+                  <Mail className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{inviteStatus[t.id].msg}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={resendingId === t.id}
+                  onClick={() => void handleResendForTenant(t.id)}
+                  className="oc-btn-ghost !h-10 !px-3 !text-xs flex-1 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${resendingId === t.id ? 'animate-spin' : ''}`} />
+                  {resendingId === t.id ? 'Sending…' : 'Resend pastor email'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const link = `${window.location.origin}/get-started/${encodeURIComponent(t.slug)}`;
+                    void navigator.clipboard?.writeText(link);
+                    setCopiedId(t.id);
+                    setTimeout(() => setCopiedId(null), 2200);
+                  }}
+                  className="oc-btn-ghost !h-10 !px-3 !text-xs flex-1"
+                >
+                  {copiedId === t.id ? <Check className="w-3.5 h-3.5 text-church-pos" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedId === t.id ? 'Copied link!' : 'Copy pastor link'}
+                </button>
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <button
