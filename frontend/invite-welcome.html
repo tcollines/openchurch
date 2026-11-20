@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
 <title>Welcome to Open Church</title>
-<!-- Open Church welcome email for a new church's pastor. Supabase: Authentication > Emails > Invite user -->
+<!-- Open Church dual-role invite email (Pastor Welcome + Department Head Invite). Supabase: Authentication > Emails > Invite user -->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=Outfit:wght@700&display=swap');
   body { margin: 0; padding: 0; width: 100% !important; background: #F2F3EF; }
@@ -23,9 +23,8 @@
 </style>
 </head>
 <body style="margin: 0; padding: 0; background: #F2F3EF;">
-<!-- Preview text (shows next to the subject in the inbox) -->
 <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;">
-  Your church is set up. Start using Open Church today — free for 7 days, then UGX 50,000 a month.
+  {{ if eq .Data.invite_type "HOD" }}You have been invited to serve on Open Church. Sign in with your Google account to open your department.{{ else }}Your church is set up on Open Church — start your 7-day free trial today.{{ end }}
 </div>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background: #F2F3EF;">
@@ -49,7 +48,11 @@
         Welcome to Open Church{{ if .Data.full_name }}, {{ .Data.full_name }}{{ end }}
       </h1>
       <p style="margin: 12px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #C4D0C6;">
-        {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Your church{{ end }} is now set up on Open Church — attendance, giving, follow-up and reports for every department, in one place.
+        {{ if eq .Data.invite_type "HOD" }}
+          You’ve been added as <strong>{{ if .Data.role_label }}{{ .Data.role_label }}{{ else }}a Department Leader{{ end }}</strong> at {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}your church{{ end }}.
+        {{ else }}
+          {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Your church{{ end }} is now set up on Open Church — attendance, giving, follow-up and reports for every department, in one place.
+        {{ end }}
       </p>
     </td>
     </tr>
@@ -58,11 +61,66 @@
     <tr>
     <td class="px" style="padding: 26px 36px 6px;">
 
+      {{ if eq .Data.invite_type "HOD" }}
+      <!-- ════════════ DEPARTMENT HEAD / TEAM LEADER INVITE ════════════ -->
+      <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #2B352E;">
+        Click the button below to verify your email and sign in with your Google account <strong style="color: #18231C;">{{ .Email }}</strong> to open your department dashboard.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+      <tr>
+        <td align="center" bgcolor="#A3E635" style="border-radius: 16px; background: #A3E635;">
+          <!--[if mso]>
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{{ .ConfirmationURL }}" style="height:56px;v-text-anchor:middle;width:528px;" arcsize="28%" stroke="f" fillcolor="#A3E635">
+          <center style="color:#0F2418;font-family:Arial,sans-serif;font-size:17px;font-weight:bold;">Open my department</center>
+          </v:roundrect>
+          <![endif]-->
+          <!--[if !mso]><!-->
+          <a href="{{ .ConfirmationURL }}" target="_blank" style="display: block; padding: 18px 20px; border-radius: 16px; font-family: Figtree, Arial, sans-serif; font-size: 17px; font-weight: 700; line-height: 20px; color: #0F2418; text-decoration: none; text-align: center;">Open my department</a>
+          <!--<![endif]-->
+        </td>
+      </tr>
+      </table>
+      <p style="margin: 10px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; line-height: 1.5; color: #5C655E; text-align: center;">
+        If the button doesn’t open, <a href="{{ .ConfirmationURL }}" target="_blank" style="color: #2F6B0A; font-weight: 600;">click here to verify &amp; sign in</a>.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px; background: #F1F9E6; border-radius: 18px;">
+      <tr>
+        <td style="padding: 18px 20px;">
+          <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; font-weight: 600; color: #2F6B0A;">Assigned role</p>
+          <p class="price" style="margin: 4px 0 0; font-family: Outfit, Arial, sans-serif; font-size: 24px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; color: #18231C;">
+            {{ if .Data.role_label }}{{ .Data.role_label }}{{ else }}Department Head{{ end }}
+          </p>
+          <p style="margin: 4px 0 0; font-family: Figtree, Arial, sans-serif; font-size: 13px; line-height: 1.45; color: #3E5B2A;">
+            {{ if .Data.department_name }}{{ .Data.department_name }} · {{ end }}{{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Open Church{{ end }}
+          </p>
+        </td>
+      </tr>
+      </table>
+
+      <h2 style="margin: 26px 0 14px; font-family: Outfit, Arial, sans-serif; font-size: 18px; font-weight: 700; color: #18231C;">How to sign in</h2>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Tap <strong>Open my department</strong> above and choose <strong>Continue with Google</strong> using <strong>{{ .Email }}</strong>.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Your role loads automatically — you’ll go straight to your department’s tools, team, reports, workplans and requisitions.</td>
+        </tr>
+        <tr>
+          <td width="26" valign="top" style="padding: 1px 0 12px;"><div style="width: 18px; height: 18px; border-radius: 50%; background: #A3E635; color: #0F2418; font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;">&#10003;</div></td>
+          <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">Works right from your phone at church or on your computer.</td>
+        </tr>
+      </table>
+
+      {{ else }}
+      <!-- ════════════ LEAD PASTOR WELCOME & 7-DAY TRIAL ════════════ -->
       <p style="margin: 0; font-family: Figtree, Arial, sans-serif; font-size: 16px; line-height: 1.55; color: #2B352E;">
         Click the button below to verify your email and sign in to <strong style="color: #18231C;">{{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}Open Church{{ end }}</strong> with your Google account <strong style="color: #18231C;">{{ .Email }}</strong>.
       </p>
 
-      <!-- Button (bulletproof) -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
       <tr>
         <td align="center" bgcolor="#A3E635" style="border-radius: 16px; background: #A3E635;">
@@ -81,7 +139,6 @@
         If the button doesn’t open, <a href="{{ .ConfirmationURL }}" target="_blank" style="color: #2F6B0A; font-weight: 600;">click here to verify your email</a>.
       </p>
 
-      <!-- Price -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 26px; background: #F1F9E6; border-radius: 18px;">
       <tr>
         <td style="padding: 18px 20px;">
@@ -94,7 +151,6 @@
       </tr>
       </table>
 
-      <!-- Terms -->
       <h2 style="margin: 28px 0 14px; font-family: Outfit, Arial, sans-serif; font-size: 18px; font-weight: 700; color: #18231C;">Free trial — terms &amp; conditions</h2>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
@@ -122,6 +178,7 @@
           <td style="padding: 0 0 12px; font-family: Figtree, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #2B352E;">You can stop at any time — there is no contract.</td>
         </tr>
       </table>
+      {{ end }}
 
       <!-- Sign-off -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 4px;">
@@ -143,7 +200,7 @@
   <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px;">
   <tr>
     <td style="padding: 18px 8px 0; text-align: center; font-family: Figtree, Arial, sans-serif; font-size: 12px; line-height: 1.6; color: #8A938C;">
-      You’re receiving this because {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}your church{{ end }} was added to Open Church with this email.<br>
+      You’re receiving this because you were added to {{ if .Data.church_name }}{{ .Data.church_name }}{{ else }}your church{{ end }} on Open Church with this email.<br>
       Open Church · Kampala, Uganda · <a href="{{ .SiteURL }}/terms" style="color: #8A938C;">Full terms</a> · <a href="{{ .SiteURL }}/privacy" style="color: #8A938C;">Privacy</a>
     </td>
   </tr>

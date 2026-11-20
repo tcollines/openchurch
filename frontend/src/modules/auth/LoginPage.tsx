@@ -20,6 +20,7 @@ interface WelcomeChurchContext {
   };
   pastorName: string;
   pastorEmail: string;
+  userRole?: string;
 }
 
 const INVITE_SESSION_FLAG = 'oc_from_pastor_invite';
@@ -140,7 +141,8 @@ export const LoginPage: React.FC = () => {
             '/auth/supabase/invite-context',
             accessToken ? { accessToken, type: 'invite' } : { tokenHash, type: callbackType || 'invite' }
           );
-          if (ctx?.church) {
+          if (ctx?.church && (!ctx.userRole || ctx.userRole === 'ADMIN')) {
+            // Lead Pastor -> show their Custom Church Login Page (/get-started/:slug)
             setWelcomeCtx(ctx);
             setEmailVerifiedBadge(true);
             window.history.replaceState(
@@ -149,7 +151,13 @@ export const LoginPage: React.FC = () => {
               `/get-started/${encodeURIComponent(ctx.church.slug)}`
             );
           } else {
-            window.history.replaceState(null, '', '/get-started');
+            // Department Head / Team Leader -> stay on the default Login Screen (/login)
+            setEmailVerifiedBadge(true);
+            const emailQuery = ctx?.pastorEmail
+              ? `?email=${encodeURIComponent(ctx.pastorEmail)}`
+              : '';
+            window.history.replaceState(null, '', `/login${emailQuery}`);
+            navigate(`/login${emailQuery}`, { replace: true });
           }
         } catch (err: unknown) {
           window.history.replaceState(null, '', location.pathname);

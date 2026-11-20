@@ -97,6 +97,7 @@ async function sendPastorVerificationInvite(params: {
   });
 
   const metadata: Record<string, string> = {
+    invite_type: 'PASTOR',
     full_name: params.pastorName.trim(),
     church_name: params.churchName.trim(),
     trial_ends: trialEndsFormatted,
@@ -159,6 +160,83 @@ async function sendPastorVerificationInvite(params: {
     welcomeUrl: redirectTo,
     message: inviteErr.message,
   };
+}
+
+const ROLE_TITLES: Record<UserRole, string> = {
+  PLATFORM_ADMIN: 'Network Council',
+  ADMIN: 'Church Administrator',
+  FINANCE_HOD: 'Head of Finance',
+  FINANCE_OFFICER: 'Finance Officer',
+  BACENTA_HOD: 'Head of Bacentas',
+  BACENTA_LEADER: 'Bacenta Leader',
+  AIRPORT_HOD: 'Head of Airport Stars',
+  AIRPORT_MEMBER: 'Airport Stars Check-In',
+  TELE_HOD: 'Head of Tele Pastoring',
+  TELE_PASTOR: 'Tele Pastor',
+  CHILDREN_HOD: "Head of Children's Church",
+  CHILDREN_WORKER: "Children's Church Team",
+  CAMPUS_HOD: 'Head of Campuses',
+  CAMPUS_LEADER: 'Campus Leader',
+};
+
+async function sendDepartmentLeaderInvite(params: {
+  fullName: string;
+  email: string;
+  churchName: string;
+  departmentName?: string;
+  role: UserRole;
+  tenantId: string;
+  appOrigin?: string;
+}): Promise<{ sent: boolean; recipientEmail: string; message: string }> {
+  const recipientEmail = params.email.trim().toLowerCase();
+  if (!supabaseAdmin) {
+    return {
+      sent: false,
+      recipientEmail,
+      message: 'SUPABASE_SERVICE_ROLE_KEY not configured in backend/.env',
+    };
+  }
+
+  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
+  // Department heads & team members land on the default /login screen (NOT the custom pastor /get-started/:slug page)
+  const redirectTo = `${baseAppUrl}/login?email=${encodeURIComponent(recipientEmail)}`;
+  const metadata: Record<string, string> = {
+    invite_type: 'HOD',
+    full_name: params.fullName.trim(),
+    church_name: params.churchName.trim(),
+    role_label: ROLE_TITLES[params.role] || 'Department Head',
+    tenant_id: params.tenantId,
+    role: params.role,
+  };
+  if (params.departmentName) {
+    metadata.department_name = params.departmentName;
+  }
+  if (SUPPORT_WHATSAPP.trim()) {
+    metadata.support_whatsapp = SUPPORT_WHATSAPP.trim();
+  }
+
+  const { error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(recipientEmail, {
+    redirectTo,
+    data: metadata,
+  });
+
+  if (!inviteErr) {
+    return { sent: true, recipientEmail, message: `Invite sent to ${recipientEmail}` };
+  }
+
+  if (/already|registered|exists/i.test(inviteErr.message)) {
+    const authClient = supabase || supabaseAdmin;
+    const { error: otpErr } = await authClient.auth.signInWithOtp({
+      email: recipientEmail,
+      options: { emailRedirectTo: redirectTo, data: metadata },
+    });
+    if (!otpErr) {
+      return { sent: true, recipientEmail, message: `Sign-in link sent to ${recipientEmail}` };
+    }
+    return { sent: false, recipientEmail, message: otpErr.message };
+  }
+
+  return { sent: false, recipientEmail, message: inviteErr.message };
 }
 
 const CORE_DEPARTMENTS: { code: DepartmentCode; name: string; description: string }[] = [
@@ -396,6 +474,7 @@ app.post('/api/auth/supabase/invite-context', async (req, res) => {
       },
       pastorName: user.fullName,
       pastorEmail: user.email,
+      userRole: user.role,
     });
   } catch (err: unknown) {
     res.status(500).json({
@@ -1018,6 +1097,25 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
       appOrigin: reqOrigin,
     });
 
+    // Also dispatch department invite emails to any separate Administrator or Department Heads added upfront
+    const otherLeaders = result.users.filter(
+      (u) => u.email.toLowerCase() !== pastorTarget.email.toLowerCase()
+    );
+    await Promise.allSettled(
+      otherLeaders.map((leader) => {
+        const dept = result.departments.find((d) => d.id === leader.departmentId);
+        return sendDepartmentLeaderInvite({
+          fullName: leader.fullName,
+          email: leader.email,
+          churchName: result.tenant.name,
+          departmentName: dept?.name,
+          role: leader.role,
+          tenantId: result.tenant.id,
+          appOrigin: reqOrigin,
+        });
+      })
+    );
+
     const sanitizeUser = (u: typeof result.adminUser) => {
       const { passwordHash: _pw, ...safe } = u;
       void _pw;
@@ -1178,9 +1276,16 @@ app.post('/api/setup/department-heads', requireTenantAuth, async (req: TenantReq
       res.status(400).json({ error: 'Add at least one department head' });
       return;
     }
-    const departments = await prisma.department.findMany({ where: { tenantId } });
+    const [tenant, departments] = await Promise.all([
+      prisma.tenant.findUnique({ where: { id: tenantId } }),
+      prisma.department.findMany({ where: { tenantId } }),
+    ]);
+    const reqOrigin =
+      (req.headers.origin as string | undefined) ||
+      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
     const passwordHash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
     const created = [];
+    const invites = [];
     for (const h of heads) {
       const hEmail = h.email?.trim().toLowerCase();
       const dept = departments.find((d) => d.code === h.code);
@@ -1208,8 +1313,22 @@ app.post('/api/setup/department-heads', requireTenantAuth, async (req: TenantReq
       const { passwordHash: _pw, ...safe } = u;
       void _pw;
       created.push(safe);
+
+      if (tenant) {
+        invites.push(
+          await sendDepartmentLeaderInvite({
+            fullName: u.fullName,
+            email: u.email,
+            churchName: tenant.name,
+            departmentName: dept.name,
+            role: u.role,
+            tenantId,
+            appOrigin: reqOrigin,
+          })
+        );
+      }
     }
-    res.status(201).json({ users: created });
+    res.status(201).json({ users: created, invites });
   } catch (err: unknown) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not add department heads' });
   }
@@ -1238,6 +1357,80 @@ app.post('/api/setup/start-trial', requireTenantAuth, async (req: TenantRequest,
     res.json({ tenant: serializeTenant(updated) });
   } catch (err: unknown) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not start the free trial' });
+  }
+});
+
+// Create a department head or serving-member dashboard login & email their invite link
+app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.status(400).json({ error: 'Missing tenant scope' });
+    return;
+  }
+  try {
+    const { fullName, email, phoneNumber, role, departmentId, fellowshipUnitId } = req.body as {
+      fullName: string;
+      email: string;
+      phoneNumber?: string;
+      role: UserRole;
+      departmentId?: string | null;
+      fellowshipUnitId?: string | null;
+    };
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!fullName?.trim() || !normalizedEmail) {
+      res.status(400).json({ error: 'Full name and Google email are required' });
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (existing) {
+      res.status(409).json({ error: `${normalizedEmail} already has an Open Church login` });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
+    const [tenant, dept] = await Promise.all([
+      prisma.tenant.findUnique({ where: { id: tenantId } }),
+      departmentId ? prisma.department.findUnique({ where: { id: departmentId } }) : Promise.resolve(null),
+    ]);
+
+    const user = await prisma.user.create({
+      data: {
+        tenantId,
+        fullName: fullName.trim(),
+        email: normalizedEmail,
+        passwordHash,
+        phoneNumber: phoneNumber || '',
+        role: role || 'AIRPORT_MEMBER',
+        departmentId: dept?.id ?? null,
+        fellowshipUnitId: fellowshipUnitId || null,
+      },
+    });
+
+    const reqOrigin =
+      (req.headers.origin as string | undefined) ||
+      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+
+    const invite = tenant
+      ? await sendDepartmentLeaderInvite({
+          fullName: user.fullName,
+          email: user.email,
+          churchName: tenant.name,
+          departmentName: dept?.name,
+          role: user.role,
+          tenantId,
+          appOrigin: reqOrigin,
+        })
+      : null;
+
+    const { passwordHash: _pw, ...safeUser } = user;
+    void _pw;
+    res.status(201).json({ user: safeUser, invite });
+  } catch (err: unknown) {
+    res.status(400).json({
+      error: err instanceof Error ? err.message : 'Failed creating user login',
+    });
   }
 });
 

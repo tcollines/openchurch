@@ -495,6 +495,26 @@ export const PlatformService = {
     saveDb((draft) => {
       draft.users.push(newUser);
     });
+
+    // Persist to Supabase PostgreSQL & automatically email their department invite link
+    void apiClient
+      .post<{ user: User }>('/users', input, { tenantId: input.tenantId })
+      .then((res) => {
+        if (res?.user) {
+          saveDb((draft) => {
+            const idx = draft.users.findIndex(
+              (u) => u.id === newUser.id || u.email.toLowerCase() === res.user.email.toLowerCase()
+            );
+            if (idx >= 0) {
+              draft.users[idx] = { ...draft.users[idx], ...res.user };
+            }
+          });
+        }
+      })
+      .catch(() => {
+        // Offline preview fallback keeps local user entry
+      });
+
     return newUser;
   },
 };
