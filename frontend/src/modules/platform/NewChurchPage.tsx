@@ -169,12 +169,14 @@ export const NewChurchPage: React.FC = () => {
 
   const [created, setCreated] = useState<{
     tenantId: string;
+    slug: string;
     name: string;
     invited: number;
     verification: PastorVerificationInfo;
   } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
   const takenEmails = new Set(PlatformService.getAllUsers().map((u) => u.email.toLowerCase()));
@@ -252,6 +254,7 @@ export const NewChurchPage: React.FC = () => {
       });
       setCreated({
         tenantId: res.tenant.id,
+        slug: res.tenant.slug,
         name: shortName || name,
         invited: res.users.length,
         verification: res.verification,
@@ -315,15 +318,31 @@ export const NewChurchPage: React.FC = () => {
               <p className="m-0 text-[13px] leading-snug mt-0.5 opacity-90">{v.message}</p>
             </div>
           </div>
-          <button
-            type="button"
-            disabled={isResending}
-            onClick={handleResendInvite}
-            className="self-start inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-2 disabled:opacity-60"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isResending ? 'animate-spin' : ''}`} />
-            {isResending ? 'Sending…' : `Resend link to ${v.recipientEmail}`}
-          </button>
+          <div className="flex flex-wrap items-center gap-4 pt-0.5">
+            <button
+              type="button"
+              disabled={isResending}
+              onClick={handleResendInvite}
+              className="inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-2 disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isResending ? 'animate-spin' : ''}`} />
+              {isResending ? 'Sending…' : `Resend link to ${v.recipientEmail}`}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const link =
+                  v.welcomeUrl ||
+                  `${window.location.origin}/get-started/${encodeURIComponent(created.slug)}`;
+                void navigator.clipboard?.writeText(link);
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 2500);
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-2"
+            >
+              {copiedLink ? 'Copied pastor login link!' : 'Copy pastor login link'}
+            </button>
+          </div>
         </div>
 
         <Card className="self-stretch items-center text-center !gap-2.5 !py-5">

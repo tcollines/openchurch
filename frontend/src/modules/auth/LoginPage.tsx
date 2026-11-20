@@ -1,53 +1,173 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { MapPin, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { apiClient } from '@/services/apiClient';
+import { PlatformService } from '@/services/churchService';
+import { churchShortName } from '@/shared/billing';
 import { getDefaultRouteForUser } from '@/shared/formatters';
 import { Department, Tenant, User } from '@/shared/types';
 
+interface WelcomeChurchContext {
+  church: {
+    id: string;
+    name: string;
+    shortName?: string | null;
+    slug: string;
+    logoUrl?: string;
+    city?: string;
+    country?: string;
+  };
+  pastorName: string;
+  pastorEmail: string;
+}
+
+const INVITE_SESSION_FLAG = 'oc_from_pastor_invite';
+
 /**
- * Open Church — Live Google Sign-In & New-Church Pastor Onboarding (/get-started -> /setup).
+ * Open Church Login Page
+ * - Default (/login): Standard Open Church sign-in screen for all members, HODs & Network Council.
+ * - Custom Pastor Link (/get-started/:slug or email invite link): Personalized church login screen
+ *   displaying the pastor's church name & logo. Signing in with their invited Google email takes
+ *   them straight into the 3-step Get Started screen (/setup).
  */
 export const LoginPage: React.FC = () => {
   const { completeSupabaseSession } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { slug: routeSlug } = useParams<{ slug?: string }>();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [verifyingInvite, setVerifyingInvite] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
+  const [emailVerifiedBadge, setEmailVerifiedBadge] = useState(false);
+  const [welcomeCtx, setWelcomeCtx] = useState<WelcomeChurchContext | null>(null);
 
   const searchParams = new URLSearchParams(location.search);
-  const invitedChurch = searchParams.get('church') || '';
-  const invitedEmail = searchParams.get('email') || '';
-  const isGetStarted = location.pathname === '/get-started' || Boolean(invitedChurch);
+  const queryChurch = searchParams.get('church') || '';
+  const queryEmail = searchParams.get('email') || '';
 
-  // 1. Handle Supabase OAuth & Pastor Email Verification callback (#access_token=... or ?token_hash=...)
+  const isCustomChurchLogin =
+    location.pathname.startsWith('/get-started') || Boolean(routeSlug) || Boolean(welcomeCtx);
+
+  // 1. Load church name & pastor details if opened via /get-started/:slug
+  useEffect(() => {
+    if (!routeSlug) return;
+    let cancelled = false;
+
+    const loadChurchWelcome = async () => {
+      try {
+        const res = await apiClient.get<WelcomeChurchContext>(
+          `/public/welcome/${encodeURIComponent(routeSlug)}`
+        );
+        if (!cancelled && res?.church) {
+          setWelcomeCtx(res);
+          return;
+        }
+      } catch {
+        // Fallback to local store if offline
+        const localTenant = PlatformService.getTenants().find(
+          (t) => t.slug === routeSlug || t.id === routeSlug
+        );
+        if (!cancelled && localTenant) {
+          const localAdmin = PlatformService.getUsersForTenant(localTenant.id).find(
+            (u) => u.role === 'ADMIN'
+          );
+          setWelcomeCtx({
+            church: {
+              id: localTenant.id,
+              name: localTenant.name,
+              shortName: localTenant.shortName,
+              slug: localTenant.slug,
+              logoUrl: localTenant.logoUrl,
+              city: localTenant.city,
+              country: localTenant.country,
+            },
+            pastorName: localAdmin?.fullName || '',
+            pastorEmail: localAdmin?.email || '',
+          });
+        }
+      }
+    };
+
+    void loadChurchWelcome();
+    return () => {
+      cancelled = true;
+    };
+  }, [routeSlug]);
+
+  // 2. Handle Supabase callbacks:
+  //    a) Email invite tap (type=invite): Verify invite & present the Custom Church Login Page (do NOT skip login!)
+  //    b) Google OAuth completion: Exchange session token -> take invited pastor to /setup, others to their dashboard
   useEffect(() => {
     const handleSupabaseCallback = async () => {
       const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
       const queryParams = new URLSearchParams(location.search);
 
+      const errorCode = hashParams.get('error_code') || queryParams.get('error_code');
       const errorDesc = hashParams.get('error_description') || queryParams.get('error_description');
       if (errorDesc) {
-        setError(errorDesc.replace(/\+/g, ' '));
         window.history.replaceState(null, '', window.location.pathname);
+        // If an invite link was clicked a second time on /get-started/:slug, the church page still loads cleanly for Google sign-in
+        if (errorCode === 'otp_expired' && routeSlug) {
+          return;
+        }
+        setError(errorDesc.replace(/\+/g, ' '));
         return;
       }
 
       const accessToken = hashParams.get('access_token');
       const tokenHash = queryParams.get('token_hash');
-      const verifyType = (queryParams.get('type') || hashParams.get('type') || 'invite') as
+      const callbackType = (queryParams.get('type') || hashParams.get('type') || '') as
         | 'invite'
         | 'magiclink'
         | 'signup'
-        | 'email';
+        | 'email'
+        | '';
 
       if (!accessToken && !tokenHash) return;
 
+      const cameFromGoogleButton = sessionStorage.getItem(INVITE_SESSION_FLAG) === '1';
+
+      // Case A: Pastor just tapped the link in their welcome email (type=invite or token_hash) ->
+      // Verify the invite link and show their Custom Church Login Page so they sign in with Google!
+      if ((callbackType === 'invite' || Boolean(tokenHash)) && !cameFromGoogleButton) {
+        setIsLoading(true);
+        setStatusMessage('Preparing your church sign-in page…');
+        setError('');
+        try {
+          const ctx = await apiClient.post<WelcomeChurchContext>(
+            '/auth/supabase/invite-context',
+            accessToken ? { accessToken, type: 'invite' } : { tokenHash, type: callbackType || 'invite' }
+          );
+          if (ctx?.church) {
+            setWelcomeCtx(ctx);
+            setEmailVerifiedBadge(true);
+            window.history.replaceState(
+              null,
+              '',
+              `/get-started/${encodeURIComponent(ctx.church.slug)}`
+            );
+          } else {
+            window.history.replaceState(null, '', '/get-started');
+          }
+        } catch (err: unknown) {
+          window.history.replaceState(null, '', location.pathname);
+          setError(err instanceof Error ? err.message : 'This invite link is invalid or has expired.');
+        } finally {
+          setIsLoading(false);
+          setStatusMessage('');
+        }
+        return;
+      }
+
+      // Case B: Completed Google OAuth sign-in -> exchange token for Open Church JWT
       setIsLoading(true);
-      setVerifyingInvite(verifyType === 'invite' || Boolean(tokenHash) || isGetStarted);
+      setStatusMessage(
+        cameFromGoogleButton || isCustomChurchLogin
+          ? 'Signing you in & opening Get Started…'
+          : 'Signing you in…'
+      );
       setError('');
       try {
         const res = await apiClient.post<{
@@ -56,35 +176,65 @@ export const LoginPage: React.FC = () => {
           tenant?: Tenant | null;
           departments?: Department[];
           users?: User[];
-        }>('/auth/supabase/callback', accessToken ? { accessToken } : { tokenHash, type: verifyType });
+        }>('/auth/supabase/callback', { accessToken });
 
         if (res?.token && res?.user) {
+          sessionStorage.removeItem(INVITE_SESSION_FLAG);
           const syncedUser = completeSupabaseSession(res);
           window.history.replaceState(null, '', window.location.pathname);
+
+          // If logging in from the Pastor's custom church link (or church setup not finished yet), go to Get Started (/setup)
+          if (
+            syncedUser.role === 'ADMIN' &&
+            (cameFromGoogleButton || isCustomChurchLogin || (res.tenant && !res.tenant.setupCompletedAt))
+          ) {
+            navigate('/setup', { replace: true });
+            return;
+          }
+
           navigate(getDefaultRouteForUser(syncedUser, res.tenant), { replace: true });
         }
       } catch (err: unknown) {
+        sessionStorage.removeItem(INVITE_SESSION_FLAG);
         window.history.replaceState(null, '', window.location.pathname);
         setError(err instanceof Error ? err.message : 'Supabase Google sign-in failed.');
       } finally {
         setIsLoading(false);
-        setVerifyingInvite(false);
+        setStatusMessage('');
       }
     };
 
-    handleSupabaseCallback();
-  }, [location.hash, location.search, isGetStarted, completeSupabaseSession, navigate]);
+    void handleSupabaseCallback();
+  }, [location.hash, location.search, location.pathname, isCustomChurchLogin, completeSupabaseSession, navigate]);
 
-  // 2. Initiate live Google OAuth through Supabase via Backend
+  // 3. Initiate live Google OAuth through Supabase via Backend
   const handleContinueWithGoogle = async () => {
     setIsLoading(true);
     setError('');
     try {
       const currentOrigin = window.location.origin;
-      const nextParam = isGetStarted ? '&next=%2Fget-started' : '';
-      const res = await apiClient.get<{ url: string }>(
-        `/auth/supabase/google-url?origin=${encodeURIComponent(currentOrigin)}${nextParam}`
-      );
+      const targetEmail = welcomeCtx?.pastorEmail || queryEmail;
+      const returnPath = welcomeCtx?.church?.slug
+        ? `/get-started/${encodeURIComponent(welcomeCtx.church.slug)}`
+        : isCustomChurchLogin
+          ? '/get-started'
+          : '/login';
+
+      if (isCustomChurchLogin) {
+        sessionStorage.setItem(INVITE_SESSION_FLAG, '1');
+      } else {
+        sessionStorage.removeItem(INVITE_SESSION_FLAG);
+      }
+
+      const params = new URLSearchParams({
+        origin: currentOrigin,
+        next: returnPath,
+      });
+      if (targetEmail) {
+        params.set('loginHint', targetEmail);
+      }
+
+      const res = await apiClient.get<{ url: string }>(`/auth/supabase/google-url?${params.toString()}`);
       if (res?.url) {
         window.location.assign(res.url);
         return;
@@ -92,6 +242,7 @@ export const LoginPage: React.FC = () => {
       setError('Could not retrieve Supabase Google sign-in URL from backend.');
       setIsLoading(false);
     } catch (err: unknown) {
+      sessionStorage.removeItem(INVITE_SESSION_FLAG);
       setError(
         err instanceof Error
           ? err.message
@@ -100,6 +251,16 @@ export const LoginPage: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  const fullChurchName = welcomeCtx?.church?.name || queryChurch || '';
+  const shortChurch = fullChurchName
+    ? churchShortName(fullChurchName, welcomeCtx?.church?.shortName)
+    : '';
+  const displayLogo = welcomeCtx?.church?.logoUrl || '/logo.jpg';
+  const displayEmail = welcomeCtx?.pastorEmail || queryEmail;
+  const locationLine = [welcomeCtx?.church?.city, welcomeCtx?.church?.country]
+    .filter(Boolean)
+    .join(', ');
 
   const googleG = (
     <svg className="w-[22px] h-[22px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -129,20 +290,31 @@ export const LoginPage: React.FC = () => {
           }}
         />
         <div className="relative h-full flex flex-col px-7 md:px-14 pt-[max(56px,env(safe-area-inset-top))] md:pt-12 pb-10 md:pb-14">
-          <span className="self-start flex items-center gap-2 pl-1 pr-3 py-1 rounded-full bg-[rgba(15,36,24,0.45)] backdrop-blur-[14px] border border-white/20">
-            <img src="/logo.jpg" alt="1000 Micro Church Network International" className="w-7 h-7 rounded-full object-cover" />
-            <span className="text-[13px] font-semibold text-white">Open Church</span>
+          <span className="self-start flex items-center gap-2 pl-1 pr-3.5 py-1 rounded-full bg-[rgba(15,36,24,0.45)] backdrop-blur-[14px] border border-white/20 max-w-full">
+            <img
+              src={isCustomChurchLogin ? displayLogo : '/logo.jpg'}
+              alt="Open Church"
+              className="w-7 h-7 rounded-full object-cover shrink-0"
+            />
+            <span className="text-[13px] font-semibold text-white truncate">
+              {isCustomChurchLogin && fullChurchName ? fullChurchName : 'Open Church'}
+            </span>
           </span>
           <div className="mt-auto flex flex-col gap-2.5 max-w-[560px]">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-church-gold">
-              <MapPin className="w-4 h-4" /> 1000 Micro Church Network
+              <MapPin className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                {isCustomChurchLogin && locationLine
+                  ? `${locationLine} · 1000 Micro Church Network`
+                  : '1000 Micro Church Network'}
+              </span>
             </span>
             <h1 className="font-display text-[36px] md:text-[52px] leading-[1.06] font-bold tracking-[-0.025em] text-white">
-              {isGetStarted ? (
+              {isCustomChurchLogin ? (
                 <>
-                  Welcome to Open Church.
+                  Welcome{shortChurch ? ` to ${shortChurch}` : ' to Open Church'}.
                   <br />
-                  Let’s set up {invitedChurch || 'your church'}.
+                  Let’s get your church ready.
                 </>
               ) : (
                 <>
@@ -153,8 +325,9 @@ export const LoginPage: React.FC = () => {
               )}
             </h1>
             <p className="hidden md:block text-[17px] leading-relaxed text-white/80">
-              Attendance, giving, follow-up and reports for every department — on your phone at the door and at your
-              desk in the office.
+              {isCustomChurchLogin
+                ? 'Sign in with your invited Google email to review your church profile, add department heads, and activate your 7-day free trial.'
+                : 'Attendance, giving, follow-up and reports for every department — on your phone at the door and at your desk in the office.'}
             </p>
           </div>
         </div>
@@ -163,22 +336,37 @@ export const LoginPage: React.FC = () => {
       {/* Sign-in panel */}
       <div className="relative flex-1 -mt-10 md:mt-0 bg-white rounded-t-[32px] md:rounded-none px-6 pt-[32px] pb-[max(48px,env(safe-area-inset-bottom))] md:w-[520px] md:shrink-0 md:flex md:flex-col md:justify-center md:px-16 min-h-[44vh]">
         <div className="flex flex-col gap-[18px] md:gap-[22px] md:max-w-[420px]">
-          <img src="/logo.jpg" alt="" aria-hidden="true" className="hidden md:block w-14 h-14 rounded-full object-cover" />
+          <img
+            src={isCustomChurchLogin ? displayLogo : '/logo.jpg'}
+            alt=""
+            aria-hidden="true"
+            className="hidden md:block w-14 h-14 rounded-full object-cover"
+          />
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2 mb-0.5">
-              <span className="flex items-center gap-1.5 text-[13px] font-semibold text-church-emerald">
-                {isGetStarted ? <Sparkles className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
-                {isGetStarted ? '7-Day Free Trial Ready' : 'Google Verified'}
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-church-limeSoft text-[12px] font-semibold text-church-emerald">
+                {isCustomChurchLogin ? <Sparkles className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                {isCustomChurchLogin
+                  ? emailVerifiedBadge
+                    ? 'Email Verified · 7-Day Free Trial'
+                    : 'New Church · 7-Day Free Trial'
+                  : 'Google Verified'}
               </span>
             </div>
             <h2 className="font-display text-2xl md:text-[34px] font-bold tracking-[-0.01em] md:tracking-[-0.02em] leading-tight">
-              {isGetStarted ? 'Verify & get started' : 'Sign in with Google'}
+              {isCustomChurchLogin && shortChurch
+                ? `Sign in to ${shortChurch}`
+                : 'Sign in with Google'}
             </h2>
             <p className="text-[15px] md:text-base leading-snug text-church-muted">
-              {invitedEmail ? (
-                <>
-                  Continue with Google as <strong className="text-church-text">{invitedEmail}</strong> to check your church details and start your 7-day free trial.
-                </>
+              {isCustomChurchLogin ? (
+                displayEmail ? (
+                  <>
+                    Continue with Google using <strong className="text-church-text">{displayEmail}</strong> to open your Get Started setup.
+                  </>
+                ) : (
+                  <>Continue with the Google email your church was registered with to open your Get Started setup.</>
+                )
               ) : (
                 <>
                   Open Church authenticates securely using your Google or ministry account.
@@ -188,10 +376,10 @@ export const LoginPage: React.FC = () => {
             </p>
           </div>
 
-          {verifyingInvite && (
+          {statusMessage && (
             <div className="flex gap-2.5 items-center px-3.5 py-3 rounded-[14px] bg-church-limeSoft text-sm font-medium text-[#2F6B0A]">
               <ShieldCheck className="w-[18px] h-[18px] shrink-0" />
-              Verifying your church invite & opening setup…
+              {statusMessage}
             </div>
           )}
 
@@ -209,15 +397,17 @@ export const LoginPage: React.FC = () => {
             className="oc-press w-full h-14 rounded-2xl bg-white text-[#1F1F1F] border-[1.5px] border-[#DADCE0] hover:bg-[#F8F9FA] flex items-center justify-center gap-3 text-[17px] font-semibold disabled:opacity-60"
           >
             {googleG}
-            {verifyingInvite
-              ? 'Opening church setup…'
+            {statusMessage
+              ? statusMessage
               : isLoading
                 ? 'Redirecting to Google…'
                 : 'Continue with Google'}
           </button>
 
           <p className="m-0 text-[13px] leading-relaxed text-church-muted">
-            Signs in through Google & Supabase. Your church role and departmental permissions load automatically.
+            {isCustomChurchLogin
+              ? 'After signing in with Google, you’ll go straight to your 3-step church setup & 7-day free trial activation.'
+              : 'Signs in through Google & Supabase. Your church role and departmental permissions load automatically.'}
           </p>
         </div>
       </div>

@@ -57,6 +57,12 @@ const RootRedirect: React.FC = () => {
   const { user, tenant } = useAuth();
   const location = useLocation();
   if (
+    location.hash.includes('type=invite') ||
+    location.search.includes('type=invite')
+  ) {
+    return <Navigate to={{ pathname: '/get-started', search: location.search, hash: location.hash }} replace />;
+  }
+  if (
     location.hash.includes('access_token=') ||
     location.hash.includes('error_description=') ||
     location.search.includes('token_hash=')
@@ -70,8 +76,9 @@ const AppRoutes: React.FC = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      {/* Get started: the welcome email's link → sign in → set up the new church */}
+      {/* Custom Pastor Login Page (opened only from the welcome email link) → Get started (/setup) */}
       <Route path="/get-started" element={<LoginPage />} />
+      <Route path="/get-started/:slug" element={<LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
       <Route path="/terms" element={<LegalPage />} />
       <Route path="/privacy" element={<LegalPage />} />

@@ -53,6 +53,7 @@ export interface PastorVerificationInfo {
   sent: boolean;
   status: 'INVITE_SENT' | 'MAGIC_LINK_SENT' | 'MISSING_SERVICE_KEY' | 'FAILED' | 'BACKEND_OFFLINE';
   recipientEmail: string;
+  welcomeUrl?: string;
   message: string;
 }
 

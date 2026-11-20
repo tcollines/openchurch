@@ -62,6 +62,7 @@ export interface PastorInviteResult {
   sent: boolean;
   status: 'INVITE_SENT' | 'MAGIC_LINK_SENT' | 'MISSING_SERVICE_KEY' | 'FAILED';
   recipientEmail: string;
+  welcomeUrl: string;
   message: string;
 }
 
@@ -70,15 +71,20 @@ async function sendPastorVerificationInvite(params: {
   pastorEmail: string;
   churchName: string;
   tenantId: string;
+  tenantSlug: string;
   trialEndsAt: Date;
   appOrigin?: string;
 }): Promise<PastorInviteResult> {
   const recipientEmail = params.pastorEmail.trim().toLowerCase();
+  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
+  const redirectTo = `${baseAppUrl}/get-started/${encodeURIComponent(params.tenantSlug)}`;
+
   if (!supabaseAdmin) {
     return {
       sent: false,
       status: 'MISSING_SERVICE_KEY',
       recipientEmail,
+      welcomeUrl: redirectTo,
       message:
         'SUPABASE_SERVICE_ROLE_KEY is not set in backend/.env yet. Add your Supabase service_role key to send verification emails.',
     };
@@ -90,15 +96,13 @@ async function sendPastorVerificationInvite(params: {
     year: 'numeric',
   });
 
-  // The email's "Start using Open Church" link opens the Get started sign-in for this church.
-  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
-  const shortChurch = params.churchName.replace(/^1000 Micro Church\s*[—-]\s*/, '').trim();
-  const redirectTo = `${baseAppUrl}/get-started?church=${encodeURIComponent(shortChurch)}&email=${encodeURIComponent(recipientEmail)}`;
   const metadata: Record<string, string> = {
     full_name: params.pastorName.trim(),
     church_name: params.churchName.trim(),
     trial_ends: trialEndsFormatted,
     tenant_id: params.tenantId,
+    tenant_slug: params.tenantSlug,
+    welcome_url: redirectTo,
     role: 'ADMIN',
   };
   if (SUPPORT_WHATSAPP.trim()) {
@@ -115,6 +119,7 @@ async function sendPastorVerificationInvite(params: {
       sent: true,
       status: 'INVITE_SENT',
       recipientEmail,
+      welcomeUrl: redirectTo,
       message: `Verification & welcome link sent to ${recipientEmail}.`,
     };
   }
@@ -134,6 +139,7 @@ async function sendPastorVerificationInvite(params: {
         sent: true,
         status: 'MAGIC_LINK_SENT',
         recipientEmail,
+        welcomeUrl: redirectTo,
         message: `${recipientEmail} is already verified in Supabase Auth — sent a fresh sign-in link.`,
       };
     }
@@ -141,6 +147,7 @@ async function sendPastorVerificationInvite(params: {
       sent: false,
       status: 'FAILED',
       recipientEmail,
+      welcomeUrl: redirectTo,
       message: otpErr.message,
     };
   }
@@ -149,6 +156,7 @@ async function sendPastorVerificationInvite(params: {
     sent: false,
     status: 'FAILED',
     recipientEmail,
+    welcomeUrl: redirectTo,
     message: inviteErr.message,
   };
 }
@@ -283,13 +291,127 @@ async function verifySupabaseAccessToken(accessToken: string): Promise<{
   };
 }
 
+// Public church welcome metadata for the custom Pastor login page (/get-started/:slug)
+app.get('/api/public/welcome/:slug', async (req, res) => {
+  try {
+    const slugParam = String(req.params.slug || '').trim().toLowerCase();
+    if (!slugParam) {
+      res.status(400).json({ error: 'Missing church identifier' });
+      return;
+    }
+
+    const tenant = await prisma.tenant.findFirst({
+      where: {
+        OR: [{ slug: slugParam }, ...(slugParam.length === 36 ? [{ id: slugParam }] : [])],
+      },
+    });
+
+    if (!tenant) {
+      res.status(404).json({ error: 'Church not found' });
+      return;
+    }
+
+    const pastorUser = await prisma.user.findFirst({
+      where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
+      orderBy: { createdAt: 'desc' },
+      select: { fullName: true, email: true },
+    });
+
+    res.json({
+      church: {
+        id: tenant.id,
+        name: tenant.name,
+        shortName: tenant.shortName,
+        slug: tenant.slug,
+        logoUrl: tenant.logoUrl,
+        city: tenant.city,
+        country: tenant.country,
+      },
+      pastorName: pastorUser?.fullName || '',
+      pastorEmail: pastorUser?.email || '',
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed loading church welcome details',
+    });
+  }
+});
+
+// Resolve church & pastor details when a pastor taps the Supabase email invite link (shows custom church login page)
+app.post('/api/auth/supabase/invite-context', async (req, res) => {
+  try {
+    const { accessToken, tokenHash, type } = req.body as {
+      accessToken?: string;
+      tokenHash?: string;
+      type?: 'invite' | 'magiclink' | 'signup' | 'email';
+    };
+
+    let sbEmail = '';
+    if (tokenHash) {
+      const authClient = supabase || supabaseAdmin;
+      if (!authClient) {
+        res.status(500).json({ error: 'Supabase API keys are not configured on backend.' });
+        return;
+      }
+      const { data, error } = await authClient.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: type || 'invite',
+      });
+      if (error || !data?.user?.email) {
+        res.status(401).json({ error: error?.message || 'Invite link is invalid or expired.' });
+        return;
+      }
+      sbEmail = data.user.email;
+    } else if (accessToken) {
+      const verified = await verifySupabaseAccessToken(accessToken);
+      if (!verified?.email) {
+        res.status(401).json({ error: 'Invalid or expired invite link.' });
+        return;
+      }
+      sbEmail = verified.email;
+    } else {
+      res.status(400).json({ error: 'Missing invite token' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: sbEmail.toLowerCase() },
+      include: { tenant: true },
+    });
+
+    if (!user || !user.tenant) {
+      res.status(404).json({ error: 'No church is linked to this invite email.' });
+      return;
+    }
+
+    res.json({
+      church: {
+        id: user.tenant.id,
+        name: user.tenant.name,
+        shortName: user.tenant.shortName,
+        slug: user.tenant.slug,
+        logoUrl: user.tenant.logoUrl,
+        city: user.tenant.city,
+        country: user.tenant.country,
+      },
+      pastorName: user.fullName,
+      pastorEmail: user.email,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed resolving church invite link',
+    });
+  }
+});
+
 // Retrieve Supabase-hosted Google OAuth initiation URL
-app.get('/api/auth/supabase/google-url', async (req, res) => {
+app.get('/api/auth/supabase/google-url', (req, res) => {
   const queryOrigin = typeof req.query.origin === 'string' ? req.query.origin.trim() : '';
   const nextPath =
     typeof req.query.next === 'string' && req.query.next.startsWith('/')
       ? req.query.next
       : '/login';
+  const loginHint = typeof req.query.loginHint === 'string' ? req.query.loginHint.trim() : '';
   const origin = (
     queryOrigin ||
     req.headers.origin ||
@@ -298,34 +420,8 @@ app.get('/api/auth/supabase/google-url', async (req, res) => {
     'http://localhost:5173'
   ).replace(/\/+$/, '');
   const redirectUrl = `${origin}${nextPath}`;
-  const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&prompt=select_account`;
-
-  try {
-    const probe = await fetch(url, { method: 'GET', redirect: 'manual' });
-    if (probe.status >= 400) {
-      let detail = '';
-      try {
-        const errBody = (await probe.json()) as { msg?: string; message?: string };
-        detail = errBody.msg || errBody.message || '';
-      } catch {
-        // ignore
-      }
-      if (/not enabled/i.test(detail)) {
-        res.status(400).json({
-          error:
-            'Google provider is not enabled yet in Supabase. In your Supabase Dashboard, open Authentication → Sign In / Providers → Google, toggle ON "Enable Sign in with Google", paste your Google Client ID & Secret, and click Save.',
-        });
-        return;
-      }
-      res.status(400).json({
-        error: detail || `Supabase Google OAuth returned HTTP ${probe.status}`,
-      });
-      return;
-    }
-  } catch {
-    // Network hiccup on server probe — still return URL so browser can navigate
-  }
-
+  const hintParam = loginHint ? `&login_hint=${encodeURIComponent(loginHint)}` : '';
+  const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&prompt=select_account${hintParam}`;
   res.json({ url });
 });
 
@@ -917,6 +1013,7 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
       pastorEmail: pastorTarget.email,
       churchName: result.tenant.name,
       tenantId: result.tenant.id,
+      tenantSlug: result.tenant.slug,
       trialEndsAt: result.tenant.trialEndsAt,
       appOrigin: reqOrigin,
     });
@@ -986,6 +1083,7 @@ app.post(
         pastorEmail: targetUser.email,
         churchName: tenant.name,
         tenantId: tenant.id,
+        tenantSlug: tenant.slug,
         trialEndsAt: tenant.trialEndsAt,
         appOrigin: reqOrigin,
       });
