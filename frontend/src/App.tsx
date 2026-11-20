@@ -13,6 +13,7 @@ import { TelePastoringModule } from '@/modules/tele-pastoring/TelePastoringModul
 import { ChildrensChurchModule } from '@/modules/childrens-church/ChildrensChurchModule';
 import { SubscriptionLock } from '@/modules/billing/SubscriptionLock';
 import { SetupPage } from '@/modules/setup/SetupPage';
+import { LegalPage } from '@/modules/legal/LegalPage';
 import { SubscriptionService } from '@/services/churchService';
 import { FellowshipUnitType, UserRole } from '@/shared/enums';
 import { getDefaultRouteForUser } from '@/shared/formatters';
@@ -46,14 +47,14 @@ const ProtectedGuard: React.FC<{
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to={getDefaultRouteForUser(user)} replace />;
+    return <Navigate to={getDefaultRouteForUser(user, tenant)} replace />;
   }
 
   return <ResponsiveShell>{children}</ResponsiveShell>;
 };
 
 const RootRedirect: React.FC = () => {
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const location = useLocation();
   if (
     location.hash.includes('access_token=') ||
@@ -62,7 +63,7 @@ const RootRedirect: React.FC = () => {
   ) {
     return <Navigate to={{ pathname: '/login', search: location.search, hash: location.hash }} replace />;
   }
-  return <Navigate to={getDefaultRouteForUser(user)} replace />;
+  return <Navigate to={getDefaultRouteForUser(user, tenant)} replace />;
 };
 
 const AppRoutes: React.FC = () => {
@@ -72,6 +73,8 @@ const AppRoutes: React.FC = () => {
       {/* Get started: the welcome email's link → sign in → set up the new church */}
       <Route path="/get-started" element={<LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
+      <Route path="/terms" element={<LegalPage />} />
+      <Route path="/privacy" element={<LegalPage />} />
 
       {/* Multi-Tenant Network Council */}
       <Route

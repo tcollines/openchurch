@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import {
   ArrowRight,
   Baby,
+  Building2,
   Check,
   ChevronLeft,
   ClipboardList,
@@ -22,6 +23,7 @@ import {
   Plane,
   Receipt,
   RefreshCw,
+  Sparkles,
   UserPlus,
   Users,
   Wallet,
@@ -106,7 +108,7 @@ const DEPT_ORDER = [
 
 const AdminOverviewTab: React.FC = () => {
   useChurchStoreRefresh();
-  const { tenant, activeTenantId } = useAuth();
+  const { user, tenant, activeTenantId } = useAuth();
   const navigate = useNavigate();
   const currency = tenant?.currency || 'UGX';
   const subState = SubscriptionService.getState(tenant);
@@ -274,6 +276,22 @@ const AdminOverviewTab: React.FC = () => {
         title="Church overview"
         subtitle={`${(tenant?.name ?? '').replace(/^1000 Micro Church\s*[—-]\s*/, '')} · services, money and approvals at a glance.`}
       />
+      {user?.role === UserRole.ADMIN && tenant && !tenant.setupCompletedAt && (
+        <button
+          type="button"
+          onClick={() => navigate('/setup')}
+          className="oc-press w-full text-left flex items-center gap-3.5 px-4 py-3.5 rounded-[20px] bg-church-limeSoft text-[#1F4A08]"
+        >
+          <span className="w-10 h-10 rounded-[14px] bg-church-lime text-church-forest flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </span>
+          <span className="flex-1 min-w-0 flex flex-col">
+            <span className="text-[15px] font-bold">Finish setting up {tenant.shortName || tenant.name}</span>
+            <span className="text-[13px] opacity-85">Check church details, add department heads &amp; activate your 7-day free trial</span>
+          </span>
+          <ArrowRight className="w-5 h-5 shrink-0" />
+        </button>
+      )}
       {subState?.phase === 'due' && <DueBanner state={subState} onClick={() => navigate('/admin/subscription')} />}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-5 items-start">
         <div className="lg:col-span-3 flex flex-col gap-4">
@@ -1005,6 +1023,15 @@ const AdminMoreView: React.FC = () => {
             ))}
           </ListCard>
           <ListCard>
+            {user?.role === UserRole.ADMIN && (
+              <Row
+                onClick={() => navigate('/setup')}
+                lead={<Tile icon={Building2} tone="blue" />}
+                title="Church profile & setup"
+                sub="Logo, address, department heads & trial settings"
+                chevron
+              />
+            )}
             <Row
               onClick={() => navigate('/admin/approvals')}
               lead={<Tile icon={Check} tone="lime" />}

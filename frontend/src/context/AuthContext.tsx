@@ -15,6 +15,7 @@ interface AuthContextValue {
     user: User;
     tenant?: Tenant | null;
     departments?: Department[];
+    users?: User[];
   }) => User;
   loginAsUser: (userId: string) => void;
   switchSupervisedTenant: (tenantId: string) => void;
@@ -98,13 +99,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user: User;
     tenant?: Tenant | null;
     departments?: Department[];
+    users?: User[];
   }): User => {
     setStoredToken(payload.token);
+    const mergedUsers = [
+      payload.user,
+      ...(payload.users ?? []).filter((u) => u.id !== payload.user.id),
+    ];
     const syncedUser =
       PlatformService.syncBackendEntities({
         tenant: payload.tenant ?? null,
         departments: payload.departments,
-        users: [payload.user],
+        users: mergedUsers,
       }) || payload.user;
     localStorage.setItem(SESSION_KEY, syncedUser.id);
     setUserId(syncedUser.id);

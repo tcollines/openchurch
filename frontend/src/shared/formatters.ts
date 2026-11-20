@@ -1,5 +1,5 @@
 import { DepartmentCode, UserRole } from './enums';
-import { User } from './types';
+import { Tenant, User } from './types';
 
 export const formatPhoneNumber = (phone: string, defaultPrefix = '+256'): string => {
   const cleaned = phone.replace(/[\s\-()]/g, '');
@@ -98,12 +98,15 @@ export const getDepartmentCodeForRole = (role: UserRole): DepartmentCode | null 
   }
 };
 
-export const getDefaultRouteForUser = (user: User | null): string => {
+export const getDefaultRouteForUser = (user: User | null, tenant?: Tenant | null): string => {
   if (!user) return '/login';
   switch (user.role) {
     case UserRole.PLATFORM_ADMIN:
       return '/platform/tenants';
     case UserRole.ADMIN:
+      if (tenant && !tenant.setupCompletedAt) {
+        return '/setup';
+      }
       return '/admin/overview';
     case UserRole.FINANCE_HOD:
     case UserRole.FINANCE_OFFICER:

@@ -51,6 +51,26 @@ type Person = { name: string; phone: string; email: string };
 const emptyPerson: Person = { name: '', phone: '', email: '' };
 export const emailOk = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.trim());
 
+const resizeChurchLogo = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const size = 256;
+      const c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      const ctx = c.getContext('2d');
+      if (!ctx) return reject(new Error('Could not read the image'));
+      const s = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => reject(new Error('Could not read the image'));
+    img.src = url;
+  });
+
 /* ── small form pieces ── */
 export const Field: React.FC<{
   label: string;
@@ -350,12 +370,16 @@ export const NewChurchPage: React.FC = () => {
               type="file"
               accept="image/*"
               className="sr-only"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                const r = new FileReader();
-                r.onload = () => setLogo(String(r.result));
-                r.readAsDataURL(f);
+                try {
+                  setLogo(await resizeChurchLogo(f));
+                } catch {
+                  const r = new FileReader();
+                  r.onload = () => setLogo(String(r.result));
+                  r.readAsDataURL(f);
+                }
               }}
             />
           </label>

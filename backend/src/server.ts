@@ -43,7 +43,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myntqhkgeyxkmxypezvu.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
@@ -71,6 +71,7 @@ async function sendPastorVerificationInvite(params: {
   churchName: string;
   tenantId: string;
   trialEndsAt: Date;
+  appOrigin?: string;
 }): Promise<PastorInviteResult> {
   const recipientEmail = params.pastorEmail.trim().toLowerCase();
   if (!supabaseAdmin) {
@@ -90,8 +91,9 @@ async function sendPastorVerificationInvite(params: {
   });
 
   // The email's "Start using Open Church" link opens the Get started sign-in for this church.
+  const baseAppUrl = (params.appOrigin?.trim() || APP_URL).replace(/\/+$/, '');
   const shortChurch = params.churchName.replace(/^1000 Micro Church\s*[—-]\s*/, '').trim();
-  const redirectTo = `${APP_URL}/get-started?church=${encodeURIComponent(shortChurch)}&email=${encodeURIComponent(recipientEmail)}`;
+  const redirectTo = `${baseAppUrl}/get-started?church=${encodeURIComponent(shortChurch)}&email=${encodeURIComponent(recipientEmail)}`;
   const metadata: Record<string, string> = {
     full_name: params.pastorName.trim(),
     church_name: params.churchName.trim(),
@@ -284,6 +286,10 @@ async function verifySupabaseAccessToken(accessToken: string): Promise<{
 // Retrieve Supabase-hosted Google OAuth initiation URL
 app.get('/api/auth/supabase/google-url', async (req, res) => {
   const queryOrigin = typeof req.query.origin === 'string' ? req.query.origin.trim() : '';
+  const nextPath =
+    typeof req.query.next === 'string' && req.query.next.startsWith('/')
+      ? req.query.next
+      : '/login';
   const origin = (
     queryOrigin ||
     req.headers.origin ||
@@ -291,7 +297,7 @@ app.get('/api/auth/supabase/google-url', async (req, res) => {
     process.env.FRONTEND_ORIGIN ||
     'http://localhost:5173'
   ).replace(/\/+$/, '');
-  const redirectUrl = `${origin}/login`;
+  const redirectUrl = `${origin}${nextPath}`;
   const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&prompt=select_account`;
 
   try {
@@ -387,9 +393,26 @@ app.post('/api/auth/supabase/callback', async (req, res) => {
       return;
     }
 
-    const departments = user.tenantId
-      ? await prisma.department.findMany({ where: { tenantId: user.tenantId } })
-      : [];
+    const [departments, tenantUsers] = user.tenantId
+      ? await Promise.all([
+          prisma.department.findMany({ where: { tenantId: user.tenantId } }),
+          prisma.user.findMany({
+            where: { tenantId: user.tenantId },
+            select: {
+              id: true,
+              tenantId: true,
+              fullName: true,
+              email: true,
+              phoneNumber: true,
+              role: true,
+              departmentId: true,
+              fellowshipUnitId: true,
+              isActive: true,
+              createdAt: true,
+            },
+          }),
+        ])
+      : [[], []];
 
     const token = signAuthToken({
       sub: user.id,
@@ -404,8 +427,9 @@ app.post('/api/auth/supabase/callback', async (req, res) => {
     res.json({
       token,
       user: safeUser,
-      tenant,
+      tenant: tenant ? { ...tenant, monthlyFee: Number(tenant.monthlyFee) } : null,
       departments,
+      users: tenantUsers,
       googlePicture: sbAvatarUrl,
       supabaseLinked: true,
     });
@@ -499,9 +523,26 @@ app.post('/api/auth/google', async (req, res) => {
       return;
     }
 
-    const departments = user.tenantId
-      ? await prisma.department.findMany({ where: { tenantId: user.tenantId } })
-      : [];
+    const [departments, tenantUsers] = user.tenantId
+      ? await Promise.all([
+          prisma.department.findMany({ where: { tenantId: user.tenantId } }),
+          prisma.user.findMany({
+            where: { tenantId: user.tenantId },
+            select: {
+              id: true,
+              tenantId: true,
+              fullName: true,
+              email: true,
+              phoneNumber: true,
+              role: true,
+              departmentId: true,
+              fellowshipUnitId: true,
+              isActive: true,
+              createdAt: true,
+            },
+          }),
+        ])
+      : [[], []];
 
     const token = signAuthToken({
       sub: user.id,
@@ -516,8 +557,9 @@ app.post('/api/auth/google', async (req, res) => {
     res.json({
       token,
       user: safeUser,
-      tenant,
+      tenant: tenant ? { ...tenant, monthlyFee: Number(tenant.monthlyFee) } : null,
       departments,
+      users: tenantUsers,
       googlePicture: googleProfilePicture,
       supabaseLinked: true,
     });
@@ -663,7 +705,7 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
     }));
 
     res.json({
-      tenants,
+      tenants: tenants.map((t) => ({ ...t, monthlyFee: Number(t.monthlyFee) })),
       departments,
       users,
       members,
@@ -866,12 +908,17 @@ app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, 
         ? { name: leadPastor.name.trim(), email: leadPastor.email.trim() }
         : { name: String(adminName).trim(), email: String(adminEmail).trim() };
 
+    const reqOrigin =
+      (req.headers.origin as string | undefined) ||
+      (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+
     const verification = await sendPastorVerificationInvite({
       pastorName: pastorTarget.name,
       pastorEmail: pastorTarget.email,
       churchName: result.tenant.name,
       tenantId: result.tenant.id,
       trialEndsAt: result.tenant.trialEndsAt,
+      appOrigin: reqOrigin,
     });
 
     const sanitizeUser = (u: typeof result.adminUser) => {
@@ -930,12 +977,17 @@ app.post(
         return;
       }
 
+      const reqOrigin =
+        (req.headers.origin as string | undefined) ||
+        (req.headers['x-forwarded-host'] ? `https://${req.headers['x-forwarded-host']}` : undefined);
+
       const verification = await sendPastorVerificationInvite({
         pastorName: targetUser.fullName,
         pastorEmail: targetUser.email,
         churchName: tenant.name,
         tenantId: tenant.id,
         trialEndsAt: tenant.trialEndsAt,
+        appOrigin: reqOrigin,
       });
 
       res.json({ verification });
