@@ -11,12 +11,11 @@ import {
   HeartHandshake,
   Home,
   LayoutDashboard,
+  Download,
   LogOut,
   MoreHorizontal,
   Bell,
-  ChevronRight,
   PhoneCall,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   Users,
@@ -27,6 +26,7 @@ import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/shared/enums';
 import { ROLE_LABELS } from '@/shared/formatters';
 import { MobileSheet } from '@/components/ui/FormControls';
+import { PwaInstallBanner, usePwaInstall } from '@/components/pwa/PwaInstallPrompt';
 
 export interface NavItem {
   to: string;
@@ -186,6 +186,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
   const navigate = useNavigate();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const { pathname } = useLocation();
+  const { canInstall, triggerInstall } = usePwaInstall();
 
   if (!user) return <>{children}</>;
 
@@ -329,8 +330,17 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
         <div className="hidden md:flex items-center justify-between gap-3 px-10 pt-6">
           <span className="text-sm text-church-muted">{today()}</span>
           <div className="flex items-center gap-2.5">
+            {canInstall && (
+              <button
+                type="button"
+                onClick={() => void triggerInstall()}
+                className="oc-btn-dark !h-11 !px-4 !text-sm"
+              >
+                <Download className="w-4 h-4 text-church-lime" /> Install app
+              </button>
+            )}
             <button type="button" onClick={() => setSwitcherOpen(true)} className="oc-btn-ghost !h-11 !px-4 !text-sm">
-              Switch account
+              Account
             </button>
             <button type="button" aria-label="Notifications" className="relative w-11 h-11 rounded-[14px] bg-white flex items-center justify-center">
               <Bell className="w-5 h-5" strokeWidth={1.8} />
@@ -340,6 +350,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
         </div>
 
         <main className={`flex-1 w-full max-w-[1240px] mx-auto px-4 sm:px-5 md:px-10 ${focusFlow ? 'pt-[max(16px,env(safe-area-inset-top))]' : 'pt-2'} md:pt-6 ${showTabBar ? 'pb-32' : 'pb-10'} md:pb-14`}>
+          {!focusFlow && <PwaInstallBanner />}
           <div className="flex flex-col gap-4 md:gap-6">{children}</div>
         </main>
       </div>
@@ -391,6 +402,18 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
             <span className="text-xs font-semibold text-church-emerald mt-0.5">{SHORT_ROLE[user.role]}</span>
           </span>
         </div>
+        {canInstall && (
+          <button
+            type="button"
+            onClick={() => {
+              setSwitcherOpen(false);
+              void triggerInstall();
+            }}
+            className="oc-btn-dark w-full"
+          >
+            <Download className="w-[18px] h-[18px] text-church-lime" /> Install Open Church app
+          </button>
+        )}
         <button type="button" onClick={signOut} className="oc-btn w-full bg-church-negSoft text-[#8F1D14]">
           <LogOut className="w-[18px] h-[18px]" /> Sign out
         </button>

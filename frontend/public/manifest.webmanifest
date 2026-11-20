@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Open Church — 1000 Micro Church Network",
+  "short_name": "Open Church",
+  "description": "Attendance, giving, follow-up and departmental management for 1000 Micro Church Network International.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0F2418",
+  "theme_color": "#0F2418",
+  "categories": ["productivity", "business", "finance"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
