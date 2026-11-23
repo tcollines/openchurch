@@ -160,7 +160,21 @@ export function normalizeMarzPayTarget(params: {
   return { country, currency, e164Phone, inferredMethod };
 }
 
-function formatMarzPayApiError(status: number, body: Record<string, unknown>): string {
+async function detectServerOutboundIp(): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    const r = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    const data = (await r.json()) as { ip?: string };
+    return data?.ip?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function formatMarzPayApiError(status: number, body: Record<string, unknown>): Promise<string> {
   const code = String(body.error_code || '').toUpperCase();
   const baseMsg = String(body.message || '').trim();
 
@@ -183,7 +197,11 @@ function formatMarzPayApiError(status: number, body: Record<string, unknown>): s
   }
 
   if (code === 'IP_WHITELIST_REQUIRED' || /ip whitelist/i.test(baseMsg)) {
-    return 'MarzPay IP Whitelist required: add your backend server IP in MarzPay Dashboard → IP Whitelist to process live collections.';
+    const currentIp = await detectServerOutboundIp();
+    if (currentIp) {
+      return `MarzPay IP Whitelist required: add this exact server IP in MarzPay Dashboard → IP Whitelist: ${currentIp} (enter only ${currentIp}, without /24).`;
+    }
+    return 'MarzPay IP Whitelist required: add your backend server IPv4 address (single IP without /24) in MarzPay Dashboard → IP Whitelist.';
   }
   if (code === 'UNAUTHORIZED' || status === 401 || /invalid api credentials/i.test(baseMsg)) {
     const activeKey = getApiKey();
@@ -234,7 +252,7 @@ async function marzPayRequest<T = Record<string, unknown>>(
   }
 
   if (!res.ok || json.status === 'error' || json.success === false) {
-    throw new Error(formatMarzPayApiError(res.status, json));
+    throw new Error(await formatMarzPayApiError(res.status, json));
   }
 
   return json as T;
