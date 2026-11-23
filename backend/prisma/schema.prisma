@@ -655,22 +655,27 @@ model SoulFollowupWeek {
 }
 
 model SubscriptionPayment {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
-  amount          Decimal  @db.Decimal(12, 2)
-  currency        String   @default("UGX")
-  paymentMethod   String   @default("MTN_MOMO") @map("payment_method") // MTN_MOMO | AIRTEL_MONEY | BANK_TRANSFER | VISA
-  referenceNumber String   @map("reference_number")
-  phoneOrAccount  String   @default("") @map("phone_or_account")
-  status          String   @default("COMPLETED") // COMPLETED | PENDING | FAILED
-  periodStart     DateTime @map("period_start")
-  periodEnd       DateTime @map("period_end")
-  recordedBy      String?  @map("recorded_by")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  amount            Decimal   @db.Decimal(12, 2)
+  currency          String    @default("UGX")
+  paymentMethod     String    @default("MTN_MOMO") @map("payment_method") // MTN_MOMO | AIRTEL_MONEY | BANK_TRANSFER | VISA
+  referenceNumber   String    @unique @map("reference_number")
+  marzpayUuid       String?   @map("marzpay_uuid")
+  providerReference String?   @map("provider_reference")
+  phoneOrAccount    String    @default("") @map("phone_or_account")
+  status            String    @default("COMPLETED") // COMPLETED | PENDING | FAILED
+  failureReason     String?   @map("failure_reason")
+  periodStart       DateTime  @map("period_start")
+  periodEnd         DateTime  @map("period_end")
+  recordedBy        String?   @map("recorded_by")
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([marzpayUuid])
   @@map("subscription_payments")
 }
 

@@ -448,6 +448,12 @@ export const PlatformService = {
         if (Array.isArray(snap.absenteeFollowups)) draft.absenteeFollowups = snap.absenteeFollowups;
         if (Array.isArray(snap.soulsWon)) draft.soulsWon = snap.soulsWon;
         if (Array.isArray(snap.soulFollowupWeeks)) draft.soulFollowupWeeks = snap.soulFollowupWeeks;
+        if (Array.isArray(snap.subscriptionPayments)) {
+          draft.subscriptionPayments = snap.subscriptionPayments.map((p) => ({
+            ...p,
+            amount: Number(p.amount),
+          }));
+        }
       });
     } catch {
       // Ignore if token expired or offline
@@ -1949,14 +1955,84 @@ export const SubscriptionService = {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
+  /** Syncs a backend-returned SubscriptionPayment (and optional updated Tenant) into the local reactive store. */
+  syncPaymentAndTenant(payment: SubscriptionPayment, tenant?: Tenant | null): SubscriptionPayment {
+    const normalizedPayment: SubscriptionPayment = {
+      ...payment,
+      amount: Number(payment.amount),
+    };
+    saveDb((draft) => {
+      const list = [...(draft.subscriptionPayments ?? [])];
+      const idx = list.findIndex(
+        (p) => p.id === normalizedPayment.id || p.referenceNumber === normalizedPayment.referenceNumber
+      );
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...normalizedPayment };
+      } else {
+        list.unshift(normalizedPayment);
+      }
+      draft.subscriptionPayments = list;
+
+      if (tenant) {
+        const tIdx = draft.tenants.findIndex((t) => t.id === tenant.id);
+        if (tIdx >= 0) {
+          draft.tenants[tIdx] = {
+            ...draft.tenants[tIdx],
+            ...tenant,
+            monthlyFee: Number(tenant.monthlyFee ?? draft.tenants[tIdx].monthlyFee ?? 50000),
+          };
+        }
+      }
+    });
+    return normalizedPayment;
+  },
+
   /**
-   * Records one month's payment and unlocks the church.
-   * The new month starts from the current end date if it is still in the future,
-   * otherwise from today — so paying early never loses days.
-   *
-   * NOTE: Mobile Money is simulated here. Connect a payment provider (e.g. MTN MoMo /
-   * Airtel Money collection APIs or an aggregator) and call this only once the provider
-   * confirms the payment.
+   * Initiates a real MarzPay Mobile Money (MTN / Airtel) or Card subscription collection via the backend.
+   * Status starts as PENDING; never marks the church paid until MarzPay confirms completion.
+   */
+  async initiateMarzPayCollection(input: {
+    method: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'VISA';
+    phoneNumber?: string;
+  }): Promise<{
+    payment: SubscriptionPayment;
+    marzpayStatus: string;
+    redirectUrl: string | null;
+    sandboxMode: boolean;
+    message: string;
+  }> {
+    const res = await apiClient.post<{
+      payment: SubscriptionPayment;
+      marzpayStatus: string;
+      redirectUrl: string | null;
+      sandboxMode: boolean;
+      message: string;
+    }>('/billing/subscription/collect', input);
+
+    const synced = SubscriptionService.syncPaymentAndTenant(res.payment);
+    return { ...res, payment: synced };
+  },
+
+  /** Polls the backend (which checks PostgreSQL + MarzPay GET /collect-money/{uuid}) for final confirmation. */
+  async checkMarzPayPaymentStatus(referenceNumber: string): Promise<{
+    status: SubscriptionPayment['status'];
+    marzpayStatus: string;
+    payment: SubscriptionPayment;
+    tenant: Tenant | null;
+  }> {
+    const res = await apiClient.get<{
+      status: SubscriptionPayment['status'];
+      marzpayStatus: string;
+      payment: SubscriptionPayment;
+      tenant: Tenant | null;
+    }>(`/billing/subscription/payments/${encodeURIComponent(referenceNumber)}/status`);
+
+    const synced = SubscriptionService.syncPaymentAndTenant(res.payment, res.tenant);
+    return { ...res, payment: synced };
+  },
+
+  /**
+   * Offline fallback helper — records one month's payment locally.
    */
   recordPayment(input: {
     tenantId: string;

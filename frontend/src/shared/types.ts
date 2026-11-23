@@ -47,11 +47,15 @@ export interface SubscriptionPayment {
   currency: string;
   paymentMethod: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'BANK_TRANSFER' | 'VISA';
   referenceNumber: string;
+  marzpayUuid?: string | null;
+  providerReference?: string | null;
   phoneOrAccount: string;
   status: 'COMPLETED' | 'PENDING' | 'FAILED';
+  failureReason?: string | null;
   periodStart: string;
   periodEnd: string;
-  recordedBy?: string;
+  recordedBy?: string | null;
+  completedAt?: string | null;
   createdAt: string;
 }
 

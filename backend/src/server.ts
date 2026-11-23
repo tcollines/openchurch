@@ -13,6 +13,16 @@ import {
   signAuthToken,
   TenantRequest,
 } from './middleware/tenantAuth';
+import {
+  checkMarzPayCollectionStatus,
+  initiateMarzPayCollection,
+  isMarzPayConfigured,
+  MarzPayStatusResult,
+  normalizeMarzPayTarget,
+  parseMarzPayWebhookPayload,
+  resolveMarzPayCallbackUrl,
+  verifyMarzPayWebhookSignature,
+} from './services/marzpayService';
 
 dotenv.config();
 
@@ -43,7 +53,14 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: '5mb' }));
+app.use(
+  express.json({
+    limit: '5mb',
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+    },
+  })
+);
 
 const cleanEnv = (v?: string): string =>
   (v || '')
@@ -988,6 +1005,7 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       absenteeFollowups,
       soulsWon,
       soulFollowupWeeks,
+      subscriptionPaymentsRaw,
     ] = await Promise.all([
       isPlatform
         ? prisma.tenant.findMany({ orderBy: { name: 'asc' } })
@@ -1027,11 +1045,20 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       prisma.absenteeFollowup.findMany({ where: tenantFilter }),
       prisma.soulWon.findMany({ where: tenantFilter }),
       prisma.soulFollowupWeek.findMany({ where: tenantFilter }),
+      prisma.subscriptionPayment.findMany({
+        where: tenantFilter,
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
     const requisitions = requisitionsRaw.map((r) => ({
       ...r,
       items: Array.isArray(r.itemsJson) ? r.itemsJson : [],
+    }));
+
+    const subscriptionPayments = subscriptionPaymentsRaw.map((p) => ({
+      ...p,
+      amount: Number(p.amount),
     }));
 
     res.json({
@@ -1057,6 +1084,7 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       absenteeFollowups,
       soulsWon,
       soulFollowupWeeks,
+      subscriptionPayments,
     });
   } catch (err: unknown) {
     res.status(500).json({
@@ -2342,6 +2370,357 @@ app.post('/api/souls/weeks', requireTenantAuth, async (req: TenantRequest, res) 
 
   res.json({ ok: true });
 });
+
+// ─── 10. MARZPAY MONTHLY SUBSCRIPTION COLLECTIONS & WEBHOOKS ──────────────────
+
+function addOneCalendarMonth(from: Date): Date {
+  const d = new Date(from);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + 1);
+  if (d.getDate() < day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
+const serializeSubscriptionPayment = <T extends { amount: unknown }>(p: T) => ({
+  ...p,
+  amount: Number(p.amount),
+});
+
+function computeNextSubscriptionWindow(tenant: {
+  subscriptionStatus: string;
+  trialEndsAt: Date;
+  subscriptionEndsAt: Date | null;
+}): { periodStart: Date; periodEnd: Date } {
+  const now = new Date();
+  const currentEnd =
+    tenant.subscriptionStatus === 'TRIALING' ? tenant.trialEndsAt : tenant.subscriptionEndsAt;
+  const activeWindow =
+    currentEnd &&
+    currentEnd > now &&
+    tenant.subscriptionStatus !== 'PAST_DUE' &&
+    tenant.subscriptionStatus !== 'SUSPENDED';
+
+  const periodStart = activeWindow ? currentEnd : now;
+  const periodEnd = addOneCalendarMonth(periodStart);
+  return { periodStart, periodEnd };
+}
+
+/**
+ * Concurrency-safe, idempotent settlement of a MarzPay collection.
+ * Ensures duplicate webhooks or simultaneous status polls never add two months for one payment.
+ */
+async function settleMarzPaySubscriptionPayment(
+  paymentIdentifier: { reference?: string; marzpayUuid?: string },
+  outcome: MarzPayStatusResult
+) {
+  const orConditions = [
+    ...(paymentIdentifier.reference ? [{ referenceNumber: paymentIdentifier.reference }] : []),
+    ...(paymentIdentifier.marzpayUuid ? [{ marzpayUuid: paymentIdentifier.marzpayUuid }] : []),
+  ];
+  if (orConditions.length === 0) return null;
+
+  const existing = await prisma.subscriptionPayment.findFirst({
+    where: { OR: orConditions },
+  });
+  if (!existing) return null;
+
+  if (outcome.normalizedStatus === 'COMPLETED') {
+    return prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: existing.tenantId } });
+      if (!tenant) return null;
+
+      const now = new Date();
+      const { periodStart, periodEnd } = computeNextSubscriptionWindow(tenant);
+
+      // Atomic transition guard: only the first caller moving status != COMPLETED wins
+      const claimed = await tx.subscriptionPayment.updateMany({
+        where: { id: existing.id, status: { not: 'COMPLETED' } },
+        data: {
+          status: 'COMPLETED',
+          periodStart,
+          periodEnd,
+          completedAt: now,
+          failureReason: null,
+          ...(outcome.providerTransactionId
+            ? { providerReference: outcome.providerTransactionId }
+            : {}),
+        },
+      });
+
+      if (claimed.count === 1) {
+        const updatedTenant = await tx.tenant.update({
+          where: { id: tenant.id },
+          data: {
+            subscriptionStatus: 'ACTIVE',
+            status: 'ACTIVE',
+            subscriptionEndsAt: periodEnd,
+            lastPaidAt: now,
+          },
+        });
+        const updatedPayment = await tx.subscriptionPayment.findUnique({
+          where: { id: existing.id },
+        });
+        return { payment: updatedPayment!, tenant: updatedTenant, newlySettled: true };
+      }
+
+      // Already settled by an earlier webhook/poll — update providerReference if newly available
+      if (outcome.providerTransactionId && !existing.providerReference) {
+        await tx.subscriptionPayment.update({
+          where: { id: existing.id },
+          data: { providerReference: outcome.providerTransactionId },
+        });
+      }
+      const currentPayment = await tx.subscriptionPayment.findUnique({
+        where: { id: existing.id },
+      });
+      return { payment: currentPayment!, tenant, newlySettled: false };
+    });
+  }
+
+  if (outcome.normalizedStatus === 'FAILED' && existing.status !== 'COMPLETED') {
+    await prisma.subscriptionPayment.updateMany({
+      where: { id: existing.id, status: { not: 'COMPLETED' } },
+      data: {
+        status: 'FAILED',
+        failureReason: outcome.failureReason || 'Payment failed or was cancelled.',
+      },
+    });
+    const [updatedPayment, tenant] = await Promise.all([
+      prisma.subscriptionPayment.findUnique({ where: { id: existing.id } }),
+      prisma.tenant.findUnique({ where: { id: existing.tenantId } }),
+    ]);
+    return updatedPayment && tenant
+      ? { payment: updatedPayment, tenant, newlySettled: false }
+      : null;
+  }
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: existing.tenantId } });
+  return tenant ? { payment: existing, tenant, newlySettled: false } : null;
+}
+
+// Initiate monthly subscription payment via MarzPay (MTN MoMo, Airtel Money, or Card)
+app.post(
+  '/api/billing/subscription/collect',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    try {
+      const tenantId = resolveTargetTenantId(req);
+      if (!tenantId) {
+        res.status(400).json({ error: 'Network Council accounts do not pay church subscriptions.' });
+        return;
+      }
+
+      if (req.userRole !== 'ADMIN' && req.userRole !== 'PLATFORM_ADMIN') {
+        res
+          .status(403)
+          .json({ error: 'Only the church administrator or lead pastor can manage subscription billing.' });
+        return;
+      }
+
+      if (!isMarzPayConfigured()) {
+        res.status(503).json({
+          error:
+            'MarzPay credentials are not configured on the server yet. Add MARZPAY_API_KEY and MARZPAY_API_SECRET.',
+        });
+        return;
+      }
+
+      const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+      if (!tenant) {
+        res.status(404).json({ error: 'Church not found' });
+        return;
+      }
+
+      const { method, phoneNumber } = (req.body || {}) as {
+        method?: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'VISA';
+        phoneNumber?: string;
+      };
+
+      const requestedMethod: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'VISA' =
+        method === 'VISA' || method === 'AIRTEL_MONEY' || method === 'MTN_MOMO'
+          ? method
+          : 'MTN_MOMO';
+
+      const targetInfo = normalizeMarzPayTarget({
+        phoneInput: phoneNumber,
+        tenantCountry: tenant.country,
+        tenantCurrency: tenant.currency,
+      });
+
+      const resolvedMethod: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'VISA' =
+        requestedMethod === 'VISA'
+          ? 'VISA'
+          : targetInfo.inferredMethod || requestedMethod;
+
+      const feeAmount = Math.max(500, Math.round(Number(tenant.monthlyFee) || 50000));
+      const frontendOrigin = resolveFrontendOrigin(req);
+      const callbackUrl = resolveMarzPayCallbackUrl(frontendOrigin);
+
+      const init = await initiateMarzPayCollection({
+        amount: feeAmount,
+        method: resolvedMethod,
+        phoneInput: phoneNumber,
+        tenantId: tenant.id,
+        tenantSlug: tenant.slug,
+        churchName: tenant.name,
+        tenantCountry: tenant.country,
+        tenantCurrency: tenant.currency,
+        callbackUrl,
+      });
+
+      const { periodStart, periodEnd } = computeNextSubscriptionWindow(tenant);
+
+      const finalMethod: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'VISA' =
+        resolvedMethod === 'VISA'
+          ? 'VISA'
+          : init.provider?.toLowerCase().includes('airtel')
+            ? 'AIRTEL_MONEY'
+            : init.provider?.toLowerCase().includes('mtn')
+              ? 'MTN_MOMO'
+              : resolvedMethod;
+
+      const pendingPayment = await prisma.subscriptionPayment.create({
+        data: {
+          tenantId: tenant.id,
+          amount: init.amountRaw || feeAmount,
+          currency: init.currency || tenant.currency || 'UGX',
+          paymentMethod: finalMethod,
+          referenceNumber: init.reference,
+          marzpayUuid: init.marzpayUuid || null,
+          phoneOrAccount: init.phoneNumber || '',
+          status: 'PENDING',
+          periodStart,
+          periodEnd,
+          recordedBy: req.userId || null,
+        },
+      });
+
+      res.status(201).json({
+        payment: serializeSubscriptionPayment(pendingPayment),
+        marzpayStatus: init.marzpayStatus,
+        redirectUrl: init.redirectUrl || null,
+        sandboxMode: init.sandboxMode,
+        message: init.message,
+      });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not initiate MarzPay subscription payment.',
+      });
+    }
+  }
+);
+
+// Poll status of an in-flight MarzPay subscription payment (confirms via DB + MarzPay GET /collect-money/{uuid})
+app.get(
+  '/api/billing/subscription/payments/:reference/status',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    try {
+      const tenantId = resolveTargetTenantId(req);
+      const refParam = String(req.params.reference || '').trim();
+      if (!refParam) {
+        res.status(400).json({ error: 'Missing payment reference' });
+        return;
+      }
+
+      const payment = await prisma.subscriptionPayment.findFirst({
+        where: {
+          referenceNumber: refParam,
+          ...(tenantId ? { tenantId } : {}),
+        },
+      });
+
+      if (!payment) {
+        res.status(404).json({ error: 'Subscription payment record not found' });
+        return;
+      }
+
+      if (payment.status === 'PENDING' && payment.marzpayUuid && isMarzPayConfigured()) {
+        try {
+          const liveOutcome = await checkMarzPayCollectionStatus(payment.marzpayUuid);
+          const settled = await settleMarzPaySubscriptionPayment(
+            { reference: payment.referenceNumber, marzpayUuid: payment.marzpayUuid },
+            liveOutcome
+          );
+          if (settled) {
+            res.json({
+              status: settled.payment.status,
+              marzpayStatus: liveOutcome.rawStatus,
+              payment: serializeSubscriptionPayment(settled.payment),
+              tenant: serializeTenant(settled.tenant),
+            });
+            return;
+          }
+        } catch (pollErr) {
+          console.warn('[MarzPay] Poll status warning:', pollErr);
+        }
+      }
+
+      const tenant = await prisma.tenant.findUnique({ where: { id: payment.tenantId } });
+      res.json({
+        status: payment.status,
+        marzpayStatus: payment.status.toLowerCase(),
+        payment: serializeSubscriptionPayment(payment),
+        tenant: tenant ? serializeTenant(tenant) : null,
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed checking subscription payment status',
+      });
+    }
+  }
+);
+
+// List subscription payment history for the authenticated church
+app.get('/api/billing/subscription/payments', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId) {
+    res.json({ payments: [] });
+    return;
+  }
+  const rows = await prisma.subscriptionPayment.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json({ payments: rows.map(serializeSubscriptionPayment) });
+});
+
+// MarzPay webhook handler (supports both direct callback_url POSTs and dashboard-wrapped { data } events)
+const handleMarzPayWebhook: express.RequestHandler = async (req, res) => {
+  try {
+    const rawBody = (req as express.Request & { rawBody?: string }).rawBody;
+    if (!verifyMarzPayWebhookSignature(rawBody, req.headers)) {
+      console.warn('[MarzPay Webhook] Invalid HMAC signature rejected.');
+      res.status(401).json({ error: 'Invalid MarzPay signature' });
+      return;
+    }
+
+    const parsed = parseMarzPayWebhookPayload((req.body || {}) as Record<string, unknown>);
+    if (!parsed.reference && !parsed.marzpayUuid) {
+      res.status(200).json({ received: true, ignored: true });
+      return;
+    }
+
+    const result = await settleMarzPaySubscriptionPayment(
+      { reference: parsed.reference, marzpayUuid: parsed.marzpayUuid },
+      parsed
+    );
+
+    console.log(
+      `[MarzPay Webhook] event=${parsed.eventType || parsed.rawStatus} ref=${parsed.reference || parsed.marzpayUuid} outcome=${parsed.normalizedStatus} settled=${Boolean(result?.newlySettled)}`
+    );
+
+    res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('[MarzPay Webhook] Error processing callback:', err);
+    res.status(200).json({ received: true });
+  }
+};
+
+app.post('/api/webhooks/marzpay', handleMarzPayWebhook);
+app.post('/webhooks/marzpay', handleMarzPayWebhook);
 
 const PORT = Number(process.env.PORT) || 5000;
 app.listen(PORT, () => {

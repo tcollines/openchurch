@@ -116,12 +116,13 @@ export const SubscriptionLock: React.FC<{ onHold?: (hold: boolean) => void }> = 
     .filter((u) => u.role === UserRole.ADMIN && u.isActive)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const admin = admins[0];
-  const recheck = () => {
+  const recheck = async () => {
     setChecking(true);
-    window.setTimeout(() => {
+    try {
+      await PlatformService.hydrateFromBackendBootstrap();
+    } finally {
       setChecking(false);
-      window.location.reload();
-    }, 600);
+    }
   };
 
   return (
