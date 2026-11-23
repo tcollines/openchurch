@@ -6,18 +6,25 @@ dotenv.config();
 const cleanSecret = (v?: string): string =>
   (v || '')
     .trim()
-    .replace(/^["'`]+|["'`]+$/g, '');
+    .replace(/^(MARZPAY_[A-Z0-9_]+\s*=\s*)/i, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .trim();
+
+const cleanCompactSecret = (v?: string): string => cleanSecret(v).replace(/\s+/g, '');
 
 const getApiBase = () =>
-  (cleanSecret(process.env.MARZPAY_API_BASE) || 'https://wallet.wearemarz.com/api/v1').replace(
+  (cleanCompactSecret(process.env.MARZPAY_API_BASE) || 'https://wallet.wearemarz.com/api/v1').replace(
     /\/+$/,
     ''
   );
-const getApiKey = () => cleanSecret(process.env.MARZPAY_API_KEY);
-const getApiSecret = () => cleanSecret(process.env.MARZPAY_API_SECRET);
-const getBase64Header = () => cleanSecret(process.env.MARZPAY_BASE64_AUTHORIZATION_HEADER);
-const getWebhookSecret = () => cleanSecret(process.env.MARZPAY_WEBHOOK_SECRET);
-const getCallbackUrlEnv = () => cleanSecret(process.env.MARZPAY_CALLBACK_URL);
+const getApiKey = () => cleanCompactSecret(process.env.MARZPAY_API_KEY);
+const getApiSecret = () => cleanCompactSecret(process.env.MARZPAY_API_SECRET);
+const getBase64Header = () =>
+  cleanSecret(process.env.MARZPAY_BASE64_AUTHORIZATION_HEADER)
+    .replace(/^Basic\s+/i, '')
+    .replace(/\s+/g, '');
+const getWebhookSecret = () => cleanCompactSecret(process.env.MARZPAY_WEBHOOK_SECRET);
+const getCallbackUrlEnv = () => cleanCompactSecret(process.env.MARZPAY_CALLBACK_URL);
 
 export type MarzPayCountryCode =
   | 'UG'
@@ -178,8 +185,14 @@ function formatMarzPayApiError(status: number, body: Record<string, unknown>): s
   if (code === 'IP_WHITELIST_REQUIRED' || /ip whitelist/i.test(baseMsg)) {
     return 'MarzPay IP Whitelist required: add your backend server IP in MarzPay Dashboard → IP Whitelist to process live collections.';
   }
-  if (code === 'UNAUTHORIZED' || status === 401) {
-    return 'MarzPay authentication failed. Check MARZPAY_API_KEY and MARZPAY_API_SECRET on the backend.';
+  if (code === 'UNAUTHORIZED' || status === 401 || /invalid api credentials/i.test(baseMsg)) {
+    const activeKey = getApiKey();
+    const keyHint = activeKey
+      ? ` (key ${activeKey.slice(0, 8)}…)`
+      : getBase64Header()
+        ? ' (using MARZPAY_BASE64_AUTHORIZATION_HEADER)'
+        : ' (no key loaded)';
+    return `MarzPay rejected the API credentials${keyHint}. Generate a fresh active API Key + Secret in MarzPay Dashboard → API Keys and update MARZPAY_API_KEY and MARZPAY_API_SECRET on Render (and backend/.env).`;
   }
   if (code === 'SERVICE_NOT_SUBSCRIBED') {
     return 'MarzPay Collection service is not enabled yet on your merchant account. Subscribe to Mobile Money / Card Collections in MarzPay Dashboard → Services.';

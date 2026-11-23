@@ -114,35 +114,37 @@ const MethodButton: React.FC<{ method: PayMethod; on: boolean; onClick: () => vo
       type="button"
       onClick={onClick}
       aria-pressed={on}
-      className={`flex-1 min-w-0 flex items-center gap-2 p-2.5 rounded-2xl text-left oc-press ${
+      className={`relative flex flex-col items-start gap-2 p-3 rounded-2xl text-left oc-press ${
         on ? 'border-2 border-[#A3E635] bg-[#F1F9E6]' : 'border-[1.5px] border-[#E2E5DF] bg-white'
       }`}
     >
-      {method === 'VISA' ? (
-        <span className="w-[32px] h-[32px] shrink-0 rounded-[10px] bg-[#0F2418] text-[#A3E635] flex items-center justify-center">
-          <CreditCard className="w-4 h-4" strokeWidth={2} />
-        </span>
-      ) : (
-        <span
-          className="w-[32px] h-[32px] shrink-0 rounded-[10px] flex items-center justify-center font-display font-extrabold text-[10px]"
-          style={{
-            background: isMtn ? '#FFCB05' : '#E40000',
-            color: isMtn ? '#18231C' : '#FFFFFF',
-          }}
-        >
-          {isMtn ? 'MTN' : isAirtel ? 'Airtel' : 'Card'}
-        </span>
-      )}
-      <span className="flex-1 min-w-0 text-[13px] font-semibold text-church-text truncate">
-        {isMtn ? 'MTN MoMo' : isAirtel ? 'Airtel' : 'Card'}
+      <div className="w-full flex items-center justify-between gap-1.5">
+        {method === 'VISA' ? (
+          <span className="w-[32px] h-[32px] shrink-0 rounded-[10px] bg-[#0F2418] text-[#A3E635] flex items-center justify-center">
+            <CreditCard className="w-4 h-4" strokeWidth={2} />
+          </span>
+        ) : (
+          <span
+            className="w-[32px] h-[32px] shrink-0 rounded-[10px] flex items-center justify-center font-display font-extrabold text-[10px]"
+            style={{
+              background: isMtn ? '#FFCB05' : '#E40000',
+              color: isMtn ? '#18231C' : '#FFFFFF',
+            }}
+          >
+            {isMtn ? 'MTN' : 'Airtel'}
+          </span>
+        )}
+        {on ? (
+          <span className="w-[20px] h-[20px] shrink-0 rounded-full bg-[#A3E635] text-church-forest flex items-center justify-center">
+            <Check className="w-3 h-3" strokeWidth={3} />
+          </span>
+        ) : (
+          <span className="w-[20px] h-[20px] shrink-0 rounded-full border-2 border-[#DADDD6]" />
+        )}
+      </div>
+      <span className="text-[13px] font-semibold text-church-text leading-tight">
+        {isMtn ? 'MTN MoMo' : isAirtel ? 'Airtel Money' : 'Card'}
       </span>
-      {on ? (
-        <span className="w-[20px] h-[20px] shrink-0 rounded-full bg-[#A3E635] text-church-forest flex items-center justify-center">
-          <Check className="w-3 h-3" strokeWidth={3} />
-        </span>
-      ) : (
-        <span className="w-[20px] h-[20px] shrink-0 rounded-full border-2 border-[#DADDD6]" />
-      )}
     </button>
   );
 };
@@ -364,7 +366,7 @@ export const PayCard: React.FC<{
           <ShieldCheck className="w-3.5 h-3.5" /> MarzPay Instant
         </span>
       </div>
-      <div className="flex gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <MethodButton method="MTN_MOMO" on={method === 'MTN_MOMO'} onClick={() => setMethod('MTN_MOMO')} />
         <MethodButton method="AIRTEL_MONEY" on={method === 'AIRTEL_MONEY'} onClick={() => setMethod('AIRTEL_MONEY')} />
         <MethodButton method="VISA" on={method === 'VISA'} onClick={() => setMethod('VISA')} />
