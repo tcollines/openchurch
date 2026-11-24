@@ -393,3 +393,46 @@ export interface RequisitionAccountability {
   reviewedAt: string | null;
   createdAt: string;
 }
+
+/* ── Discipleship ──────────────────────────────────────────────────────────
+ * Classes are Discipleship's own sessions. They never appear in service check-in. */
+export interface DiscipleshipClass {
+  id: string;
+  tenantId: string;
+  departmentId: string;
+  name: string;
+  classDate: string; // YYYY-MM-DD
+  startTime: string; // HH:MM (24h)
+  trainerMemberId: string | null;
+  trainerName: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** A church member enrolled in discipleship. Progress (enrolled → in progress → completed) is worked out from attendance. */
+export interface DiscipleshipEnrollment {
+  id: string;
+  tenantId: string;
+  memberId: string;
+  status: 'ACTIVE' | 'WITHDRAWN';
+  enrolledAt: string;
+  enrolledBy: string | null;
+}
+
+/** Someone checked in to a class. isTeam = a trainer or helper on duty, not a student. */
+export interface DiscipleshipAttendance {
+  id: string;
+  tenantId: string;
+  classId: string;
+  memberId: string;
+  isTeam: boolean;
+  checkedInBy: string | null;
+  checkedInAt: string;
+}
+
+export interface DiscipleshipSettings {
+  id: string;
+  tenantId: string;
+  classesToComplete: number;
+  updatedAt: string;
+}

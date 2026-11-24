@@ -16,6 +16,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
@@ -41,6 +42,7 @@ export const DEPT_LOOK: Record<string, { icon: React.ElementType; tone: TileTone
   [DepartmentCode.TELE_PASTORING]: { icon: HeartPulse, tone: 'violet', label: 'Tele Pastoring' },
   [DepartmentCode.CHILDRENS_CHURCH]: { icon: Baby, tone: 'rose', label: 'Children’s Church' },
   [DepartmentCode.CAMPUSES]: { icon: GraduationCap, tone: 'indigo', label: 'Campuses' },
+  [DepartmentCode.DISCIPLESHIP]: { icon: BookOpen, tone: 'violet', label: 'Discipleship' },
   [DepartmentCode.ADMIN]: { icon: Users, tone: 'neutral', label: 'Administration' },
 };
 
@@ -73,6 +75,7 @@ const ACT_ICON: Record<Activity['kind'], React.ElementType> = {
   call: Phone,
   request: FileText,
   kids: Baby,
+  class: BookOpen,
 };
 
 export const InspectDepartmentPage: React.FC = () => {

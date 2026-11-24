@@ -22,6 +22,7 @@ enum DepartmentCode {
   TELE_PASTORING
   CHILDRENS_CHURCH
   CAMPUSES
+  DISCIPLESHIP
 }
 
 enum UserRole {
@@ -39,6 +40,8 @@ enum UserRole {
   CHILDREN_WORKER
   CAMPUS_HOD
   CAMPUS_LEADER
+  DISCIPLESHIP_HOD
+  DISCIPLESHIP_MEMBER
 }
 
 enum ServiceCategory {
@@ -173,6 +176,10 @@ model Tenant {
   soulFollowupWeeks           SoulFollowupWeek[]
   subscriptionPayments        SubscriptionPayment[]
   accountabilities            RequisitionAccountability[]
+  discipleshipClasses         DiscipleshipClass[]
+  discipleshipEnrollments     DiscipleshipEnrollment[]
+  discipleshipAttendance      DiscipleshipAttendance[]
+  discipleshipSettings        DiscipleshipSettings?
 
   @@map("tenants")
 }
@@ -193,6 +200,7 @@ model Department {
   requisitions        Requisition[]
   financeTransactions FinanceTransaction[]
   serviceDuties       ServiceAttendance[]
+  discipleshipClasses DiscipleshipClass[]
 
   @@unique([tenantId, code])
   @@map("departments")
@@ -270,6 +278,9 @@ model Member {
   meetingAttendance   FellowshipMeetingAttendance[]
   teleReachouts       TeleReachout[]
   absenteeFollowups   AbsenteeFollowup[]
+  discipleshipEnrollments DiscipleshipEnrollment[]
+  discipleshipAttendance  DiscipleshipAttendance[]
+  discipleshipTrainer     DiscipleshipClass[]     @relation("DiscipleshipTrainer")
 
   @@index([tenantId, fullName, phoneNumber])
   @@map("members")
@@ -709,4 +720,73 @@ model RequisitionAccountability {
 
   @@index([tenantId, departmentId])
   @@map("requisition_accountabilities")
+}
+
+// ─── DISCIPLESHIP ────────────────────────────────────────────────────────────
+// Discipleship's own classes: never part of service check-in.
+
+model DiscipleshipClass {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  departmentId    String   @map("department_id") @db.Uuid
+  name            String
+  classDate       String   @map("class_date") // YYYY-MM-DD
+  startTime       String   @default("18:00") @map("start_time") // HH:MM
+  trainerMemberId String?  @map("trainer_member_id") @db.Uuid
+  trainerName     String   @default("") @map("trainer_name")
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department               @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  trainer    Member?                  @relation("DiscipleshipTrainer", fields: [trainerMemberId], references: [id], onDelete: SetNull)
+  attendance DiscipleshipAttendance[]
+
+  @@index([tenantId, classDate])
+  @@map("discipleship_classes")
+}
+
+/// Enrolled → in progress → completed is worked out from class attendance.
+model DiscipleshipEnrollment {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  memberId   String   @map("member_id") @db.Uuid
+  status     String   @default("ACTIVE") // ACTIVE | WITHDRAWN
+  enrolledAt DateTime @default(now()) @map("enrolled_at")
+  enrolledBy String?  @map("enrolled_by") @db.Uuid
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, memberId])
+  @@map("discipleship_enrollments")
+}
+
+model DiscipleshipAttendance {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  classId     String   @map("class_id") @db.Uuid
+  memberId    String   @map("member_id") @db.Uuid
+  isTeam      Boolean  @default(false) @map("is_team") // trainer / helper on duty
+  checkedInBy String?  @map("checked_in_by") @db.Uuid
+  checkedInAt DateTime @default(now()) @map("checked_in_at")
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  class  DiscipleshipClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  member Member            @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, memberId])
+  @@index([tenantId, memberId])
+  @@map("discipleship_attendance")
+}
+
+model DiscipleshipSettings {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @unique @map("tenant_id") @db.Uuid
+  classesToComplete Int      @default(6) @map("classes_to_complete")
+  updatedAt         DateTime @default(now()) @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("discipleship_settings")
 }

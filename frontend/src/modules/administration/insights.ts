@@ -10,6 +10,7 @@ export const INSPECT_KEYS: Record<string, DepartmentCode> = {
   'tele-pastoring': DepartmentCode.TELE_PASTORING,
   children: DepartmentCode.CHILDRENS_CHURCH,
   campuses: DepartmentCode.CAMPUSES,
+  discipleship: DepartmentCode.DISCIPLESHIP,
 };
 export const INSPECT_KEY_BY_CODE: Record<string, string> = Object.fromEntries(Object.entries(INSPECT_KEYS).map(([k, v]) => [v, k]));
 export const DEPT_DASHBOARD: Record<string, string> = {
@@ -19,6 +20,7 @@ export const DEPT_DASHBOARD: Record<string, string> = {
   [DepartmentCode.TELE_PASTORING]: '/tele-pastoring/absentees',
   [DepartmentCode.CHILDRENS_CHURCH]: '/children/checkin',
   [DepartmentCode.CAMPUSES]: '/campuses/hod',
+  [DepartmentCode.DISCIPLESHIP]: '/discipleship/classes',
 };
 
 const HEAD_ROLE: Record<string, string> = {
@@ -28,10 +30,11 @@ const HEAD_ROLE: Record<string, string> = {
   [DepartmentCode.TELE_PASTORING]: 'TELE_HOD',
   [DepartmentCode.CHILDRENS_CHURCH]: 'CHILDREN_HOD',
   [DepartmentCode.CAMPUSES]: 'CAMPUS_HOD',
+  [DepartmentCode.DISCIPLESHIP]: 'DISCIPLESHIP_HOD',
 };
 
 export interface Activity {
-  kind: 'money' | 'meeting' | 'outreach' | 'checkin' | 'call' | 'request' | 'kids';
+  kind: 'money' | 'meeting' | 'outreach' | 'checkin' | 'call' | 'request' | 'kids' | 'class';
   title: string;
   sub: string;
   amount?: number;
@@ -263,6 +266,46 @@ export const inspectDepartment = (tenantId: string, code: DepartmentCode): Inspe
           const first = db.serviceAttendance.filter((a) => a.serviceId === s.id && a.isFirstTimeVisit).length;
           return { kind: 'checkin', title: `${s.title} · check-in`, sub: `${short(s.serviceDate)} · ${n} checked in${first ? ` · ${first} first-timers` : ''}`, at: s.serviceDate };
         }),
+        ...reqActivity,
+      ]
+        .sort((a, b) => b.at.localeCompare(a.at))
+        .slice(0, 5),
+    };
+  }
+
+  if (code === DepartmentCode.DISCIPLESHIP) {
+    const today = new Date().toISOString().slice(0, 10);
+    const classes = (db.discipleshipClasses ?? []).filter((c) => c.tenantId === tenantId).sort((a, b) => b.classDate.localeCompare(a.classDate));
+    const held = classes.filter((c) => c.classDate <= today);
+    const enrolled = (db.discipleshipEnrollments ?? []).filter((e) => e.tenantId === tenantId && e.status === 'ACTIVE');
+    const att = (db.discipleshipAttendance ?? []).filter((a) => a.tenantId === tenantId && !a.isTeam);
+    const target = (db.discipleshipSettings ?? []).find((x) => x.tenantId === tenantId)?.classesToComplete || 6;
+    const presentAt = (classId: string) => att.filter((a) => a.classId === classId).length;
+    const bars = held.slice(0, 5).reverse().map((c) => ({ label: short(c.classDate), pct: Math.min(100, pct(presentAt(c.id), enrolled.length)) }));
+    const classIds = new Set(classes.map((c) => c.id));
+    const done = (memberId: string) => att.filter((a) => a.memberId === memberId && classIds.has(a.classId)).length;
+    const completed = enrolled.filter((e) => done(e.memberId) >= target).length;
+    const latest = held[0];
+    return {
+      ...base,
+      activityLabel: 'Classes held',
+      activityCount: held.filter((c) => inMonth(c.classDate)).length,
+      attendanceLabel: 'Class attendance',
+      attendance: avg(bars),
+      bars,
+      attendanceNote: latest
+        ? `${presentAt(latest.id)} of ${enrolled.length} enrolled came to ${latest.name} · ${completed} completed so far`
+        : `${enrolled.length} enrolled · no classes held yet`,
+      peopleTitle: 'Progress',
+      people: enrolled
+        .map((e) => {
+          const n = done(e.memberId);
+          return { name: members.get(e.memberId)?.fullName ?? 'Member', sub: n >= target ? 'Completed' : n ? `${n} of ${target} classes` : 'Enrolled, not started', pct: Math.min(100, pct(n, target)) };
+        })
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 8),
+      activity: [
+        ...held.slice(0, 5).map<Activity>((c) => ({ kind: 'class', title: c.name, sub: `${short(c.classDate)} · ${presentAt(c.id)} present · ${c.trainerName}`, at: c.classDate })),
         ...reqActivity,
       ]
         .sort((a, b) => b.at.localeCompare(a.at))

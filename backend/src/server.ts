@@ -338,6 +338,8 @@ const ROLE_TITLES: Record<UserRole, string> = {
   CHILDREN_WORKER: "Children's Church Team",
   CAMPUS_HOD: 'Head of Campuses',
   CAMPUS_LEADER: 'Campus Leader',
+  DISCIPLESHIP_HOD: 'Head of Discipleship',
+  DISCIPLESHIP_MEMBER: 'Discipleship Check-In',
 };
 
 async function sendDepartmentLeaderInvite(params: {
@@ -474,7 +476,20 @@ const CORE_DEPARTMENTS: { code: DepartmentCode; name: string; description: strin
     name: 'Campuses Ministry',
     description: 'University & school campus fellowships, outreach reports & offerings',
   },
+  {
+    code: 'DISCIPLESHIP',
+    name: 'Discipleship',
+    description: 'Discipleship classes, member check-in and progress from enrolled to completed',
+  },
 ];
+
+/** Churches created before a department existed get it the next time they load (e.g. Discipleship). */
+async function ensureCoreDepartments(tenantId: string): Promise<void> {
+  await prisma.department.createMany({
+    data: CORE_DEPARTMENTS.map((d) => ({ tenantId, code: d.code, name: d.name, description: d.description })),
+    skipDuplicates: true,
+  });
+}
 
 // ─── 1. HEALTH CHECK (PRISMA <-> SUPABASE POSTGRESQL) ─────────────────────────
 
@@ -1003,6 +1018,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => {
   try {
     const isPlatform = req.userRole === 'PLATFORM_ADMIN';
+    if (!isPlatform && req.tenantId) await ensureCoreDepartments(req.tenantId).catch(() => undefined);
     const tenantFilter = isPlatform
       ? req.query.tenantId
         ? { tenantId: String(req.query.tenantId) }
@@ -1034,6 +1050,10 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       soulFollowupWeeks,
       subscriptionPaymentsRaw,
       accountabilitiesRaw,
+      discipleshipClasses,
+      discipleshipEnrollments,
+      discipleshipAttendance,
+      discipleshipSettings,
     ] = await Promise.all([
       isPlatform
         ? prisma.tenant.findMany({ orderBy: { name: 'asc' } })
@@ -1078,6 +1098,10 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
         orderBy: { createdAt: 'desc' },
       }),
       prisma.requisitionAccountability.findMany({ where: tenantFilter }),
+      prisma.discipleshipClass.findMany({ where: tenantFilter, orderBy: { classDate: 'desc' } }),
+      prisma.discipleshipEnrollment.findMany({ where: tenantFilter }),
+      prisma.discipleshipAttendance.findMany({ where: tenantFilter }),
+      prisma.discipleshipSettings.findMany({ where: tenantFilter }),
     ]);
 
     const requisitions = requisitionsRaw.map((r) => ({
@@ -1119,6 +1143,10 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
         items: Array.isArray(a.itemsJson) ? a.itemsJson : [],
         receiptPaths: Array.isArray(a.receiptPaths) ? a.receiptPaths : [],
       })),
+      discipleshipClasses,
+      discipleshipEnrollments,
+      discipleshipAttendance,
+      discipleshipSettings,
     });
   } catch (err: unknown) {
     res.status(500).json({
@@ -1137,6 +1165,7 @@ const HOD_ROLE_BY_DEPT: Partial<Record<DepartmentCode, UserRole>> = {
   TELE_PASTORING: 'TELE_HOD',
   CHILDRENS_CHURCH: 'CHILDREN_HOD',
   CAMPUSES: 'CAMPUS_HOD',
+  DISCIPLESHIP: 'DISCIPLESHIP_HOD',
 };
 
 app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, res) => {
@@ -2902,6 +2931,10 @@ const SYNC_MODELS: Record<string, Prisma.ModelName> = {
   soulsWon: 'SoulWon',
   soulFollowupWeeks: 'SoulFollowupWeek',
   requisitionAccountabilities: 'RequisitionAccountability',
+  discipleshipClasses: 'DiscipleshipClass',
+  discipleshipEnrollments: 'DiscipleshipEnrollment',
+  discipleshipAttendance: 'DiscipleshipAttendance',
+  discipleshipSettings: 'DiscipleshipSettings',
 };
 
 type SyncOp = { entity: string; op: 'upsert' | 'delete'; id: string; record?: Record<string, unknown> };

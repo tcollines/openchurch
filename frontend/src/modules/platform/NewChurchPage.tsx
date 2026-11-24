@@ -45,6 +45,7 @@ const HOD_DEPTS: { code: DepartmentCode; label: string }[] = [
   { code: DepartmentCode.TELE_PASTORING, label: 'Tele Pastoring' },
   { code: DepartmentCode.CHILDRENS_CHURCH, label: 'Children’s Church' },
   { code: DepartmentCode.CAMPUSES, label: 'Campuses' },
+  { code: DepartmentCode.DISCIPLESHIP, label: 'Discipleship' },
 ];
 
 type Person = { name: string; phone: string; email: string };

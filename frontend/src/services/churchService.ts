@@ -30,6 +30,10 @@ import {
   Partner,
   Requisition,
   RequisitionAccountability,
+  DiscipleshipClass,
+  DiscipleshipEnrollment,
+  DiscipleshipAttendance,
+  DiscipleshipSettings,
   AccountabilityItem,
   RequisitionLineItem,
   Service,
@@ -110,6 +114,12 @@ const migrateDb = (db: OpenChurchDatabase): OpenChurchDatabase => {
     db.requisitionAccountabilities = [];
     changed = true;
   }
+  for (const k of ['discipleshipClasses', 'discipleshipEnrollments', 'discipleshipAttendance', 'discipleshipSettings'] as const) {
+    if (!Array.isArray(db[k])) {
+      (db as unknown as Record<string, unknown[]>)[k] = [];
+      changed = true;
+    }
+  }
   if (!db.users.some((u) => u.email.toLowerCase() === 'tcollines004@gmail.com')) {
     db.users.unshift({
       id: 'u-platform-collines',
@@ -170,6 +180,10 @@ const SYNCED_KEYS = [
   'soulsWon',
   'soulFollowupWeeks',
   'requisitionAccountabilities',
+  'discipleshipClasses',
+  'discipleshipEnrollments',
+  'discipleshipAttendance',
+  'discipleshipSettings',
 ] as const;
 type SyncedKey = (typeof SYNCED_KEYS)[number];
 type WithId = { id: string; tenantId?: string };
@@ -301,6 +315,7 @@ export const PlatformService = {
       [DepartmentCode.TELE_PASTORING]: UserRole.TELE_HOD,
       [DepartmentCode.CHILDRENS_CHURCH]: UserRole.CHILDREN_HOD,
       [DepartmentCode.CAMPUSES]: UserRole.CAMPUS_HOD,
+      [DepartmentCode.DISCIPLESHIP]: UserRole.DISCIPLESHIP_HOD,
       [DepartmentCode.ADMIN]: UserRole.ADMIN,
     };
     const taken = new Set([adminUser.email, ...dbCache.users.map((u) => u.email.toLowerCase())]);
@@ -527,6 +542,10 @@ export const PlatformService = {
         if (Array.isArray(snap.soulsWon)) draft.soulsWon = snap.soulsWon;
         if (Array.isArray(snap.soulFollowupWeeks)) draft.soulFollowupWeeks = snap.soulFollowupWeeks;
         if (Array.isArray(snap.requisitionAccountabilities)) draft.requisitionAccountabilities = snap.requisitionAccountabilities;
+        if (Array.isArray(snap.discipleshipClasses)) draft.discipleshipClasses = snap.discipleshipClasses;
+        if (Array.isArray(snap.discipleshipEnrollments)) draft.discipleshipEnrollments = snap.discipleshipEnrollments;
+        if (Array.isArray(snap.discipleshipAttendance)) draft.discipleshipAttendance = snap.discipleshipAttendance;
+        if (Array.isArray(snap.discipleshipSettings)) draft.discipleshipSettings = snap.discipleshipSettings;
         if (Array.isArray(snap.subscriptionPayments)) {
           draft.subscriptionPayments = snap.subscriptionPayments.map((p) => ({
             ...p,
@@ -2416,6 +2435,7 @@ export const HEAD_ROLE_BY_DEPT: Record<DepartmentCode, UserRole> = {
   [DepartmentCode.TELE_PASTORING]: UserRole.TELE_HOD,
   [DepartmentCode.CHILDRENS_CHURCH]: UserRole.CHILDREN_HOD,
   [DepartmentCode.CAMPUSES]: UserRole.CAMPUS_HOD,
+  [DepartmentCode.DISCIPLESHIP]: UserRole.DISCIPLESHIP_HOD,
 };
 
 
@@ -2599,6 +2619,166 @@ export const AccountabilityService = {
       a.reviewNote = note.trim();
       a.reviewedBy = reviewedBy;
       a.reviewedAt = new Date().toISOString();
+    });
+  },
+};
+
+/* ── Discipleship ────────────────────────────────────────────────────────────
+ * Classes belong to Discipleship only (never in service check-in). A member's
+ * status comes from how many classes they attended as a student:
+ * 0 → Enrolled, below the track length → In progress, at or above → Completed. */
+export type DiscipleshipStage = 'ENROLLED' | 'IN_PROGRESS' | 'COMPLETED';
+export interface DiscipleshipProgress {
+  enrollment: DiscipleshipEnrollment;
+  member: Member | null;
+  attended: number;
+  target: number;
+  stage: DiscipleshipStage;
+  lastClassDate: string | null;
+  completedOn: string | null;
+  missedLastTwo: boolean;
+}
+export const DEFAULT_CLASSES_TO_COMPLETE = 6;
+
+export const DiscipleshipService = {
+  getClasses(tenantId: string): DiscipleshipClass[] {
+    return (dbCache.discipleshipClasses ?? [])
+      .filter((c) => c.tenantId === tenantId)
+      .sort((a, b) => (b.classDate + b.startTime).localeCompare(a.classDate + a.startTime));
+  },
+
+  createClass(input: { tenantId: string; departmentId: string; name: string; classDate: string; startTime: string; trainerMemberId: string | null; trainerName: string; createdBy: string }): DiscipleshipClass {
+    const name = input.name.trim();
+    if (!name) throw new Error('Give the class a name.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.classDate)) throw new Error('Pick the class date.');
+    if (!/^\d{2}:\d{2}$/.test(input.startTime)) throw new Error('Pick the class time.');
+    const trainerName = input.trainerName.trim();
+    if (!trainerName) throw new Error('Choose who is teaching.');
+    const record: DiscipleshipClass = {
+      id: uid('dcls'),
+      tenantId: input.tenantId,
+      departmentId: input.departmentId,
+      name,
+      classDate: input.classDate,
+      startTime: input.startTime,
+      trainerMemberId: input.trainerMemberId,
+      trainerName,
+      createdBy: input.createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    saveDb((draft) => {
+      draft.discipleshipClasses.unshift(record);
+    });
+    return record;
+  },
+
+  deleteClass(classId: string): void {
+    saveDb((draft) => {
+      draft.discipleshipClasses = draft.discipleshipClasses.filter((c) => c.id !== classId);
+      draft.discipleshipAttendance = draft.discipleshipAttendance.filter((a) => a.classId !== classId);
+    });
+  },
+
+  getEnrollments(tenantId: string): DiscipleshipEnrollment[] {
+    return (dbCache.discipleshipEnrollments ?? []).filter((e) => e.tenantId === tenantId && e.status === 'ACTIVE');
+  },
+
+  isEnrolled(tenantId: string, memberId: string): boolean {
+    return DiscipleshipService.getEnrollments(tenantId).some((e) => e.memberId === memberId);
+  },
+
+  enroll(tenantId: string, memberId: string, enrolledBy: string): DiscipleshipEnrollment {
+    const existing = (dbCache.discipleshipEnrollments ?? []).find((e) => e.tenantId === tenantId && e.memberId === memberId);
+    if (existing?.status === 'ACTIVE') return existing;
+    const record: DiscipleshipEnrollment = existing
+      ? { ...existing, status: 'ACTIVE', enrolledAt: new Date().toISOString(), enrolledBy }
+      : { id: uid('denr'), tenantId, memberId, status: 'ACTIVE', enrolledAt: new Date().toISOString(), enrolledBy };
+    saveDb((draft) => {
+      draft.discipleshipEnrollments = draft.discipleshipEnrollments.filter((e) => e.id !== record.id);
+      draft.discipleshipEnrollments.unshift(record);
+    });
+    return record;
+  },
+
+  withdraw(enrollmentId: string): void {
+    saveDb((draft) => {
+      const e = draft.discipleshipEnrollments.find((x) => x.id === enrollmentId);
+      if (e) e.status = 'WITHDRAWN';
+    });
+  },
+
+  getAttendance(tenantId: string, classId?: string): DiscipleshipAttendance[] {
+    return (dbCache.discipleshipAttendance ?? []).filter((a) => a.tenantId === tenantId && (!classId || a.classId === classId));
+  },
+
+  checkIn(input: { tenantId: string; classId: string; memberId: string; checkedInBy: string; isTeam?: boolean }): void {
+    const already = (dbCache.discipleshipAttendance ?? []).some((a) => a.classId === input.classId && a.memberId === input.memberId);
+    if (already) return;
+    const record: DiscipleshipAttendance = {
+      id: uid('datt'),
+      tenantId: input.tenantId,
+      classId: input.classId,
+      memberId: input.memberId,
+      isTeam: Boolean(input.isTeam),
+      checkedInBy: input.checkedInBy,
+      checkedInAt: new Date().toISOString(),
+    };
+    saveDb((draft) => {
+      draft.discipleshipAttendance.unshift(record);
+    });
+  },
+
+  undoCheckIn(classId: string, memberId: string): void {
+    saveDb((draft) => {
+      draft.discipleshipAttendance = draft.discipleshipAttendance.filter((a) => !(a.classId === classId && a.memberId === memberId));
+    });
+  },
+
+  classesToComplete(tenantId: string): number {
+    const s = (dbCache.discipleshipSettings ?? []).find((x) => x.tenantId === tenantId);
+    return s?.classesToComplete && s.classesToComplete > 0 ? s.classesToComplete : DEFAULT_CLASSES_TO_COMPLETE;
+  },
+
+  setClassesToComplete(tenantId: string, n: number): void {
+    const value = Math.max(1, Math.min(52, Math.round(n)));
+    const existing = (dbCache.discipleshipSettings ?? []).find((x) => x.tenantId === tenantId);
+    const record: DiscipleshipSettings = { id: existing?.id ?? uid('dset'), tenantId, classesToComplete: value, updatedAt: new Date().toISOString() };
+    saveDb((draft) => {
+      draft.discipleshipSettings = draft.discipleshipSettings.filter((x) => x.id !== record.id);
+      draft.discipleshipSettings.push(record);
+    });
+  },
+
+  /** Everyone enrolled with how far they've got. */
+  progress(tenantId: string): DiscipleshipProgress[] {
+    const target = DiscipleshipService.classesToComplete(tenantId);
+    const classes = DiscipleshipService.getClasses(tenantId);
+    const dateOf = new Map(classes.map((c) => [c.id, c.classDate]));
+    const today = new Date().toISOString().slice(0, 10);
+    const pastIds = classes.filter((c) => c.classDate <= today).map((c) => c.id); // newest first
+    const att = DiscipleshipService.getAttendance(tenantId).filter((a) => !a.isTeam);
+    const members = new Map((dbCache.members ?? []).filter((m) => m.tenantId === tenantId).map((m) => [m.id, m]));
+    return DiscipleshipService.getEnrollments(tenantId).map((enrollment) => {
+      const mine = att
+        .filter((a) => a.memberId === enrollment.memberId && dateOf.has(a.classId))
+        .map((a) => dateOf.get(a.classId) as string)
+        .sort();
+      const attended = mine.length;
+      const stage: DiscipleshipStage = attended === 0 ? 'ENROLLED' : attended >= target ? 'COMPLETED' : 'IN_PROGRESS';
+      const startDay = [enrollment.enrolledAt.slice(0, 10), mine[0]].filter(Boolean).sort()[0] as string;
+      const sinceEnrolled = pastIds.filter((id) => (dateOf.get(id) as string) >= startDay);
+      const attendedIds = new Set(att.filter((a) => a.memberId === enrollment.memberId).map((a) => a.classId));
+      const missedLastTwo = stage !== 'COMPLETED' && sinceEnrolled.length >= 2 && sinceEnrolled.slice(0, 2).every((id) => !attendedIds.has(id));
+      return {
+        enrollment,
+        member: members.get(enrollment.memberId) ?? null,
+        attended,
+        target,
+        stage,
+        lastClassDate: mine[mine.length - 1] ?? null,
+        completedOn: stage === 'COMPLETED' ? mine[target - 1] : null,
+        missedLastTwo,
+      };
     });
   },
 };

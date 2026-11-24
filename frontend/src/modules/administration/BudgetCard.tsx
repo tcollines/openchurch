@@ -12,6 +12,7 @@ const LABEL: Record<string, string> = {
   TELE_PASTORING: 'Tele Pastoring',
   CHILDRENS_CHURCH: 'Children’s Church',
   CAMPUSES: 'Campuses',
+  DISCIPLESHIP: 'Discipleship',
   ADMIN: 'Administration',
 };
 const sh = (n: number) => (n >= 1_000_000 ? `${Math.round(n / 10_000) / 100}M` : n >= 1_000 ? `${Math.round(n / 1_000)}K` : `${Math.round(n)}`);

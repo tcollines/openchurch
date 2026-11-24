@@ -90,6 +90,7 @@ const DEPT_SHORT: Record<string, string> = {
   [DepartmentCode.TELE_PASTORING]: 'Tele Pastoring',
   [DepartmentCode.CHILDRENS_CHURCH]: 'Children’s Church',
   [DepartmentCode.CAMPUSES]: 'Campuses',
+  [DepartmentCode.DISCIPLESHIP]: 'Discipleship',
 };
 
 type Extra = { label: string; sub: string; icon: React.ElementType; tone: 'amber' | 'blue' | 'lime' | 'violet' | 'green' | 'rose' | 'indigo' | 'red'; to: string };
@@ -114,6 +115,10 @@ const DEPT_EXTRAS: Partial<Record<DepartmentCode, Extra[]>> = {
   [DepartmentCode.TELE_PASTORING]: [
     { label: 'Absentees', sub: 'Members who missed 3 in a row', icon: PhoneCall, tone: 'violet', to: '/tele-pastoring/absentees' },
     { label: 'Souls pipeline', sub: 'Who’s in week 1, 2, 3, 4', icon: Sparkles, tone: 'lime', to: '/tele-pastoring/souls' },
+  ],
+  [DepartmentCode.DISCIPLESHIP]: [
+    { label: 'Classes', sub: 'Create classes and see past ones', icon: CalendarDays, tone: 'violet', to: '/discipleship/classes' },
+    { label: 'Attendance progress', sub: 'Who’s close to completing', icon: Sparkles, tone: 'lime', to: '/discipleship/progress' },
   ],
   [DepartmentCode.CHILDRENS_CHURCH]: [
     { label: 'Child safety', sub: 'Guardian check-out and alerts', icon: ShieldCheck, tone: 'green', to: '/children/checkin' },
@@ -201,7 +206,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
   const monthKey = new Date().toISOString().slice(0, 7);
   const contributedThisMonth = contributions.filter((c) => c.contributionDate.startsWith(monthKey)).reduce((s, c) => s + c.amount, 0);
   const deptLabel =
-    ({ FINANCE: 'Finance', BACENTA: 'Bacentas', AIRPORT_STARS: 'Airport Stars', TELE_PASTORING: 'Tele Pastoring', CHILDRENS_CHURCH: 'Children’s Church', CAMPUSES: 'Campuses', ADMIN: 'Administration' } as Record<string, string>)[departmentCode] ||
+    ({ FINANCE: 'Finance', BACENTA: 'Bacentas', AIRPORT_STARS: 'Airport Stars', TELE_PASTORING: 'Tele Pastoring', CHILDRENS_CHURCH: 'Children’s Church', CAMPUSES: 'Campuses', DISCIPLESHIP: 'Discipleship', ADMIN: 'Administration' } as Record<string, string>)[departmentCode] ||
     department?.name ||
     'The department';
 
@@ -474,7 +479,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
               <span className="text-[15px] font-semibold">
                 {servingMembers.length} serving in {deptName}
               </span>
-              <span className="oc-sub">Mark who’s on duty this service</span>
+              <span className="oc-sub">Mark who’s on duty this {departmentCode === DepartmentCode.DISCIPLESHIP ? 'class' : 'service'}</span>
             </span>
             <ChevronRight className="w-[18px] h-[18px] text-church-faint" />
           </button>

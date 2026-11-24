@@ -18,6 +18,7 @@ const DEPT_SHORT: Record<string, string> = {
   [DepartmentCode.TELE_PASTORING]: 'Tele Pastoring',
   [DepartmentCode.CHILDRENS_CHURCH]: 'Children’s Church',
   [DepartmentCode.CAMPUSES]: 'Campuses',
+  [DepartmentCode.DISCIPLESHIP]: 'Discipleship',
 };
 
 /** Which dashboard a new login gets, by department and serving role. */
@@ -29,6 +30,7 @@ const LOGIN_ROLE: Record<string, { hod: UserRole; member: UserRole }> = {
   [DepartmentCode.TELE_PASTORING]: { hod: UserRole.TELE_HOD, member: UserRole.TELE_PASTOR },
   [DepartmentCode.CHILDRENS_CHURCH]: { hod: UserRole.CHILDREN_HOD, member: UserRole.CHILDREN_WORKER },
   [DepartmentCode.CAMPUSES]: { hod: UserRole.CAMPUS_HOD, member: UserRole.CAMPUS_LEADER },
+  [DepartmentCode.DISCIPLESHIP]: { hod: UserRole.DISCIPLESHIP_HOD, member: UserRole.DISCIPLESHIP_MEMBER },
 };
 
 const prettyPhone = (p: string) => p.replace(/^\+?256(\d{3})(\d{3})(\d{3})$/, '+256 $1 $2 $3');
@@ -37,9 +39,19 @@ const prettyPhone = (p: string) => p.replace(/^\+?256(\d{3})(\d{3})(\d{3})$/, '+
  * Department team: who serves, who's on duty this service,
  * and adding someone by searching the church database.
  */
-export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBack: () => void }> = ({
+/** Duty tracked against something other than church services (e.g. Discipleship classes). */
+export interface DutySessions {
+  noun: string;
+  sessions: { id: string; label: string }[];
+  isOnDuty: (memberId: string, sessionId: string) => boolean;
+  toggle: (memberId: string, sessionId: string, onDuty: boolean) => void;
+  attendancePct: (memberId: string) => number;
+}
+
+export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBack?: () => void; duty?: DutySessions }> = ({
   departmentCode,
   onBack,
+  duty,
 }) => {
   useChurchStoreRefresh();
   const { user, activeTenantId } = useAuth();
@@ -54,16 +66,21 @@ export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBa
   const serving = dept ? allServing.filter((s) => s.departmentId === dept.id) : [];
   const users = PlatformService.getUsersForTenant(activeTenantId);
 
-  const [serviceId, setServiceId] = useState(services[0]?.id ?? '');
-  const activeServiceId = serviceId || services[0]?.id || '';
-  const onDutyIds = new Set(allAtt.filter((a) => a.serviceId === activeServiceId).map((a) => a.memberId));
+  const sessions = duty ? duty.sessions : services.map((s) => ({ id: s.id, label: `${s.title} · ${formatDate(s.serviceDate)}` }));
+  const [serviceId, setServiceId] = useState(sessions[0]?.id ?? '');
+  const activeServiceId = serviceId || sessions[0]?.id || '';
+  const onDutyIds = new Set(
+    duty
+      ? serving.filter((sm) => duty.isOnDuty(sm.memberId, activeServiceId)).map((sm) => sm.memberId)
+      : allAtt.filter((a) => a.serviceId === activeServiceId).map((a) => a.memberId)
+  );
 
   const rows = serving
     .map((sm) => {
       const m = members.find((x) => x.id === sm.memberId);
       if (!m) return null;
       const attended = allAtt.filter((a) => a.memberId === m.id).length;
-      const pct = services.length ? Math.round((attended / services.length) * 100) : 0;
+      const pct = duty ? duty.attendancePct(m.id) : services.length ? Math.round((attended / services.length) * 100) : 0;
       return { sm, m, pct, login: users.find((u) => u.id === sm.userId) ?? null, onDuty: onDutyIds.has(m.id) };
     })
     .filter(Boolean) as { sm: (typeof serving)[number]; m: (typeof members)[number]; pct: number; login: (typeof users)[number] | null; onDuty: boolean }[];
@@ -75,6 +92,7 @@ export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBa
 
   const toggleDuty = (memberId: string, on: boolean) => {
     if (!activeServiceId || !user) return;
+    if (duty) return duty.toggle(memberId, activeServiceId, on);
     if (on) AttendanceAndMemberService.undoMemberCheckIn(activeServiceId, memberId);
     else
       AttendanceAndMemberService.checkInMember({
@@ -312,17 +330,17 @@ export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBa
 
   return (
     <>
-      <div className="flex items-center gap-2.5">
+      {onBack && <div className="flex items-center gap-2.5">
         <button type="button" onClick={onBack} className="inline-flex items-center gap-2.5 text-sm text-church-muted">
           <span className="oc-press w-11 h-11 rounded-[14px] bg-white flex items-center justify-center text-church-text">
             <ChevronLeft className="w-5 h-5" />
           </span>
           More
         </button>
-      </div>
+      </div>}
       <PageHeader
         title="Team"
-        subtitle={`Everyone serving in ${deptName}, and who’s on duty this service.`}
+        subtitle={`Everyone serving in ${deptName}, and who’s on duty this ${duty?.noun ?? 'service'}.`}
         actions={
           <button type="button" onClick={() => setAddOpen(true)} className="oc-btn-dark lg:hidden">
             <UserPlus className="w-[18px] h-[18px] text-church-lime" /> Add a member
@@ -346,13 +364,13 @@ export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBa
               ]}
             />
           </Card>
-          {services.length > 0 && (
+          {sessions.length > 0 && (
             <PickerRow
               icon={CalendarDays}
               label="Duty for"
               value={activeServiceId}
               onChange={setServiceId}
-              options={services.map((s) => ({ value: s.id, label: `${s.title} · ${formatDate(s.serviceDate)}` }))}
+              options={sessions.map((s) => ({ value: s.id, label: s.label }))}
             />
           )}
           {rows.length === 0 ? (

@@ -12,6 +12,7 @@ import { NotificationsPage } from '@/modules/notifications/Notifications';
 import { AirportStarsModule } from '@/modules/airport-stars/AirportStarsModule';
 import { TelePastoringModule } from '@/modules/tele-pastoring/TelePastoringModule';
 import { ChildrensChurchModule } from '@/modules/childrens-church/ChildrensChurchModule';
+import { DiscipleshipModule } from '@/modules/discipleship/DiscipleshipModule';
 import { SubscriptionLock } from '@/modules/billing/SubscriptionLock';
 import { SetupPage } from '@/modules/setup/SetupPage';
 import { LegalPage } from '@/modules/legal/LegalPage';
@@ -205,6 +206,16 @@ const AppRoutes: React.FC = () => {
             allowedRoles={[UserRole.CAMPUS_HOD, UserRole.CAMPUS_LEADER]}
           >
             <FellowshipModule unitType={FellowshipUnitType.CAMPUS} />
+          </ProtectedGuard>
+        }
+      />
+
+      {/* 8. Discipleship Dept (HOD + check-in-only team members) */}
+      <Route
+        path="/discipleship/*"
+        element={
+          <ProtectedGuard allowedRoles={[UserRole.DISCIPLESHIP_HOD, UserRole.DISCIPLESHIP_MEMBER]}>
+            <DiscipleshipModule />
           </ProtectedGuard>
         }
       />

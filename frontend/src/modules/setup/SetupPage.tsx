@@ -27,6 +27,7 @@ import {
   Users,
   Wallet,
   X,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
@@ -60,6 +61,7 @@ const DEPTS: { code: DepartmentCode; label: string; icon: React.ElementType; ton
   { code: DepartmentCode.TELE_PASTORING, label: 'Tele Pastoring', icon: PhoneCall, tone: 'rose' },
   { code: DepartmentCode.CHILDRENS_CHURCH, label: 'Children’s Church', icon: Baby, tone: 'amber' },
   { code: DepartmentCode.CAMPUSES, label: 'Campuses', icon: GraduationCap, tone: 'teal' },
+  { code: DepartmentCode.DISCIPLESHIP, label: 'Discipleship', icon: BookOpen, tone: 'violet' },
 ];
 
 const TITLES = ['pastor', 'ps', 'ps.', 'rev', 'rev.', 'reverend', 'apostle', 'bishop', 'prophet', 'evangelist', 'dr', 'dr.'];

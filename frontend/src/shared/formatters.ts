@@ -54,6 +54,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.CHILDREN_WORKER]: "Children's Church Worker",
   [UserRole.CAMPUS_HOD]: 'Head of Campuses',
   [UserRole.CAMPUS_LEADER]: 'Campus Leader',
+  [UserRole.DISCIPLESHIP_HOD]: 'Head of Discipleship',
+  [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship Check-In Member',
 };
 
 export const HOD_ROLES: UserRole[] = [
@@ -64,6 +66,7 @@ export const HOD_ROLES: UserRole[] = [
   UserRole.TELE_HOD,
   UserRole.CHILDREN_HOD,
   UserRole.CAMPUS_HOD,
+  UserRole.DISCIPLESHIP_HOD,
 ];
 
 export const isHodUser = (user: User | null): boolean => {
@@ -93,6 +96,9 @@ export const getDepartmentCodeForRole = (role: UserRole): DepartmentCode | null 
     case UserRole.CAMPUS_HOD:
     case UserRole.CAMPUS_LEADER:
       return DepartmentCode.CAMPUSES;
+    case UserRole.DISCIPLESHIP_HOD:
+    case UserRole.DISCIPLESHIP_MEMBER:
+      return DepartmentCode.DISCIPLESHIP;
     default:
       return null;
   }
@@ -128,6 +134,9 @@ export const getDefaultRouteForUser = (user: User | null, tenant?: Tenant | null
       return '/campuses/hod';
     case UserRole.CAMPUS_LEADER:
       return '/campuses/my-unit';
+    case UserRole.DISCIPLESHIP_HOD:
+    case UserRole.DISCIPLESHIP_MEMBER:
+      return '/discipleship/classes';
     default:
       return '/login';
   }

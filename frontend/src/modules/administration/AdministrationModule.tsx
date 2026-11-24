@@ -27,6 +27,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  BookOpen,
 } from 'lucide-react';
 import {
   Avatar,
@@ -90,6 +91,7 @@ const DEPT_META: Record<string, { icon: React.ElementType; tone: TileTone; to: s
   [DepartmentCode.TELE_PASTORING]: { icon: HeartPulse, tone: 'violet', to: '/tele-pastoring/absentees', dot: '#55307F' },
   [DepartmentCode.CHILDRENS_CHURCH]: { icon: Baby, tone: 'rose', to: '/children/checkin', dot: '#8A2B33' },
   [DepartmentCode.CAMPUSES]: { icon: GraduationCap, tone: 'indigo', to: '/campuses/hod', dot: '#33397F' },
+  [DepartmentCode.DISCIPLESHIP]: { icon: BookOpen, tone: 'violet', to: '/discipleship/classes', dot: '#55307F' },
   [DepartmentCode.ADMIN]: { icon: Users, tone: 'neutral', to: '/admin/overview', dot: '#18231C' },
 };
 const DEPT_SHORT: Record<string, string> = {
@@ -99,6 +101,7 @@ const DEPT_SHORT: Record<string, string> = {
   [DepartmentCode.TELE_PASTORING]: 'Tele Pastoring',
   [DepartmentCode.CHILDRENS_CHURCH]: 'Children’s Church',
   [DepartmentCode.CAMPUSES]: 'Campuses',
+  [DepartmentCode.DISCIPLESHIP]: 'Discipleship',
   [DepartmentCode.ADMIN]: 'Administration',
 };
 const DEPT_ORDER = [
@@ -108,6 +111,7 @@ const DEPT_ORDER = [
   DepartmentCode.TELE_PASTORING,
   DepartmentCode.CHILDRENS_CHURCH,
   DepartmentCode.CAMPUSES,
+  DepartmentCode.DISCIPLESHIP,
 ];
 
 /* ── 1. Overview ─────────────────────────────────────────────── */

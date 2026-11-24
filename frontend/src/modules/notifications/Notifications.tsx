@@ -32,6 +32,7 @@ const HEAD_DEPT: Partial<Record<UserRole, DepartmentCode>> = {
   [UserRole.TELE_HOD]: DepartmentCode.TELE_PASTORING,
   [UserRole.CHILDREN_HOD]: DepartmentCode.CHILDRENS_CHURCH,
   [UserRole.CAMPUS_HOD]: DepartmentCode.CAMPUSES,
+  [UserRole.DISCIPLESHIP_HOD]: DepartmentCode.DISCIPLESHIP,
 };
 const DEPT_LABEL: Record<string, string> = {
   FINANCE: 'Finance',
@@ -40,6 +41,7 @@ const DEPT_LABEL: Record<string, string> = {
   TELE_PASTORING: 'Tele Pastoring',
   CHILDRENS_CHURCH: 'Children’s Church',
   CAMPUSES: 'Campuses',
+  DISCIPLESHIP: 'Discipleship',
   ADMIN: 'Administration',
 };
 const MORE_ROUTE: Record<string, string> = {
@@ -49,6 +51,7 @@ const MORE_ROUTE: Record<string, string> = {
   TELE_PASTORING: '/tele-pastoring/more',
   CHILDRENS_CHURCH: '/children/more',
   CAMPUSES: '/campuses/hod/more',
+  DISCIPLESHIP: '/discipleship/more',
 };
 const short = (n: number) => (n >= 1_000_000 ? `${Math.round(n / 10_000) / 100}M` : n >= 1_000 ? `${Math.round(n / 1_000)}K` : `${Math.round(n)}`);
 

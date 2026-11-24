@@ -17,6 +17,7 @@ const LABEL: Record<string, string> = {
   TELE_PASTORING: 'Tele Pastoring',
   CHILDRENS_CHURCH: 'Children’s Church',
   CAMPUSES: 'Campuses',
+  DISCIPLESHIP: 'Discipleship',
   ADMIN: 'Administration',
 };
 const n = (v: number) => Math.round(v).toLocaleString('en-US');

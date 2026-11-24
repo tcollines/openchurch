@@ -19,7 +19,10 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
-  Wallet, ClipboardCheck,
+  Wallet,
+  ClipboardCheck,
+  TrendingUp,
+  BookOpen,
 } from 'lucide-react';
 import { Avatar, initials } from '@/components/ui/kit';
 import { NotificationBell } from '@/modules/notifications/Notifications';
@@ -132,6 +135,17 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
         { to: '/campuses/my-unit/outreach', label: 'Outreach report', shortLabel: 'Outreach', icon: Sparkles },
         { to: '/campuses/my-unit/finance', label: 'Meeting finance', shortLabel: 'Finance', icon: Coins },
       ];
+    case UserRole.DISCIPLESHIP_HOD:
+      return [
+        { to: '/discipleship/classes', label: 'Class check-in', shortLabel: 'Check-In', icon: CheckCircle2 },
+        { to: '/discipleship/progress', label: 'Attendance progress', shortLabel: 'Progress', icon: TrendingUp },
+        { to: '/discipleship/members', label: 'Members', shortLabel: 'Members', icon: Users },
+        { to: '/discipleship/team', label: 'Team & duty', shortLabel: 'Team', icon: ShieldCheck },
+        { to: '/discipleship/more', label: 'More', shortLabel: 'More', icon: MoreHorizontal },
+      ];
+    case UserRole.DISCIPLESHIP_MEMBER:
+      // Check-in only, like Airport Stars members.
+      return [{ to: '/discipleship/classes', label: 'Class check-in', shortLabel: 'Check-In', icon: CheckCircle2 }];
     default:
       return [];
   }
@@ -152,6 +166,8 @@ const DEPT_LABEL: Partial<Record<UserRole, string>> = {
   [UserRole.CHILDREN_WORKER]: 'Children’s Church',
   [UserRole.CAMPUS_HOD]: 'Campuses',
   [UserRole.CAMPUS_LEADER]: 'My campus',
+  [UserRole.DISCIPLESHIP_HOD]: 'Discipleship',
+  [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship',
 };
 
 const SHORT_ROLE: Record<UserRole, string> = {
@@ -169,6 +185,8 @@ const SHORT_ROLE: Record<UserRole, string> = {
   [UserRole.CHILDREN_WORKER]: 'Children’s Church team',
   [UserRole.CAMPUS_HOD]: 'Head of Campuses',
   [UserRole.CAMPUS_LEADER]: 'Campus Leader',
+  [UserRole.DISCIPLESHIP_HOD]: 'Head of Discipleship',
+  [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship · Check-in',
 };
 
 const ADMIN_DEPTS: { to: string; label: string; icon: React.ElementType; bg: string; fg: string }[] = [
@@ -178,6 +196,7 @@ const ADMIN_DEPTS: { to: string; label: string; icon: React.ElementType; bg: str
   { to: '/tele-pastoring/absentees', label: 'Tele Pastoring', icon: HeartPulse, bg: '#ECE3F6', fg: '#55307F' },
   { to: '/children/checkin', label: 'Children’s Church', icon: Baby, bg: '#F7DEDF', fg: '#8A2B33' },
   { to: '/campuses/hod', label: 'Campuses', icon: GraduationCap, bg: '#E4E6F7', fg: '#33397F' },
+  { to: '/discipleship/classes', label: 'Discipleship', icon: BookOpen, bg: '#ECE3F6', fg: '#55307F' },
 ];
 
 const isEnd = (to: string) => to.endsWith('/hod') || to.endsWith('/my-unit');
@@ -190,6 +209,7 @@ export const ADMIN_DEPT_VIEWS: { prefix: string; key: string; label: string; rol
   { prefix: '/tele-pastoring', key: 'tele-pastoring', label: 'Tele Pastoring', role: UserRole.TELE_HOD },
   { prefix: '/children', key: 'children', label: 'Children’s Church', role: UserRole.CHILDREN_HOD },
   { prefix: '/campuses', key: 'campuses', label: 'Campuses', role: UserRole.CAMPUS_HOD },
+  { prefix: '/discipleship', key: 'discipleship', label: 'Discipleship', role: UserRole.DISCIPLESHIP_HOD },
 ];
 
 /** Screens opened from More / Inspect: own back arrow, no greeting header, no bottom bar on phones. */

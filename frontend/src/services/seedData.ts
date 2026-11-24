@@ -20,6 +20,10 @@ import {
   SoulWon,
   SubscriptionPayment,
   RequisitionAccountability,
+  DiscipleshipClass,
+  DiscipleshipEnrollment,
+  DiscipleshipAttendance,
+  DiscipleshipSettings,
   TeleReachout,
   Tenant,
   User,
@@ -51,6 +55,10 @@ export interface OpenChurchDatabase {
   soulFollowupWeeks: SoulFollowupWeek[];
   subscriptionPayments: SubscriptionPayment[];
   requisitionAccountabilities: RequisitionAccountability[];
+  discipleshipClasses: DiscipleshipClass[];
+  discipleshipEnrollments: DiscipleshipEnrollment[];
+  discipleshipAttendance: DiscipleshipAttendance[];
+  discipleshipSettings: DiscipleshipSettings[];
 }
 
 export const createDepartmentsForTenant = (tenantId: string): Department[] => [
@@ -103,6 +111,13 @@ export const createDepartmentsForTenant = (tenantId: string): Department[] => [
     name: 'Campuses Ministry',
     description: 'University & school campus fellowships, outreach reports & offerings',
   },
+  {
+    id: `${tenantId}-dept-discipleship`,
+    tenantId,
+    code: DepartmentCode.DISCIPLESHIP,
+    name: 'Discipleship',
+    description: 'Discipleship classes, member check-in and progress from enrolled to completed',
+  },
 ];
 
 /** Clean production-ready initial store — zero demo churches, members or transactions. */
@@ -143,5 +158,9 @@ export const buildInitialSeedDatabase = (): OpenChurchDatabase => ({
   soulsWon: [],
   soulFollowupWeeks: [],
   requisitionAccountabilities: [],
+  discipleshipClasses: [],
+  discipleshipEnrollments: [],
+  discipleshipAttendance: [],
+  discipleshipSettings: [],
   subscriptionPayments: [],
 });
