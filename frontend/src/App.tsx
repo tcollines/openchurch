@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ResponsiveShell } from '@/components/layout/ResponsiveShell';
 import { LoginPage } from '@/modules/auth/LoginPage';
-import { PlatformTenantsPage } from '@/modules/platform/PlatformTenantsPage';
+import { CouncilChurchesPage, CouncilChurchPage, CouncilWalletPage } from '@/modules/platform/CouncilPages';
 import { NewChurchPage } from '@/modules/platform/NewChurchPage';
 import { AdministrationModule } from '@/modules/administration/AdministrationModule';
 import { FinanceModule } from '@/modules/finance/FinanceModule';
@@ -96,7 +96,23 @@ const AppRoutes: React.FC = () => {
         path="/platform/tenants"
         element={
           <ProtectedGuard allowedRoles={[UserRole.PLATFORM_ADMIN]}>
-            <PlatformTenantsPage />
+            <CouncilChurchesPage />
+          </ProtectedGuard>
+        }
+      />
+      <Route
+        path="/platform/tenants/:id"
+        element={
+          <ProtectedGuard allowedRoles={[UserRole.PLATFORM_ADMIN]}>
+            <CouncilChurchPage />
+          </ProtectedGuard>
+        }
+      />
+      <Route
+        path="/platform/wallet"
+        element={
+          <ProtectedGuard allowedRoles={[UserRole.PLATFORM_ADMIN]}>
+            <CouncilWalletPage />
           </ProtectedGuard>
         }
       />

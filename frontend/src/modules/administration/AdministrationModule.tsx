@@ -71,6 +71,8 @@ import { HodMoreTab } from '@/components/hod-more/HodMoreTab';
 import { SubscriptionPage } from '@/modules/billing/SubscriptionPage';
 import { DueBanner } from '@/modules/billing/BillingParts';
 import { SubscriptionService } from '@/services/churchService';
+import { INSPECT_KEY_BY_CODE } from './insights';
+import { churchContributions, churchRequests, ChurchProfilePage, ContributionsPage, InspectDepartmentPage, RequestsPage, teamAttendance, TeamAttendancePage } from './AdminTools';
 
 /* ── shared bits ─────────────────────────────────────────────── */
 
@@ -258,7 +260,7 @@ const AdminOverviewTab: React.FC = () => {
             <button
               key={code}
               type="button"
-              onClick={() => navigate(m.to)}
+              onClick={() => navigate(`/admin/inspect/${INSPECT_KEY_BY_CODE[code]}`)}
               className="oc-press text-left flex flex-col gap-3 p-4 rounded-[20px] bg-white"
             >
               <Tile icon={m.icon} tone={m.tone} size={36} />
@@ -975,81 +977,53 @@ const AdminMoreView: React.FC = () => {
   useChurchStoreRefresh();
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
-  const tools: { label: string; sub: string; icon: React.ElementType }[] = [
-    { label: 'Requisitions', sub: 'Ask for funds', icon: FileText },
-    { label: 'Workplans & budget', sub: 'Monthly plan for Admin', icon: ClipboardList },
-    { label: 'Contributions', sub: 'What the team gives', icon: Coins },
-    { label: 'Team & duty', sub: 'Who serves, who’s on duty', icon: Users },
-    { label: 'Subscription', sub: subscriptionSub(tenant), icon: Wallet },
+  const tid = tenant?.id ?? '';
+  const reqs = tid ? churchRequests(tid) : [];
+  const m0 = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const pending = reqs.filter((r) => r.status === 'Pending').length;
+  const approved = reqs.filter((r) => (r.status === 'Approved' || r.status === 'Paid') && new Date(r.at) >= m0).length;
+  const given = tid ? churchContributions(tid, m0).reduce((a, c) => a + Number(c.amount), 0) : 0;
+  const team = tid ? teamAttendance(tid) : null;
+  const short = (n: number) => (n >= 1_000_000 ? `${Math.round(n / 10_000) / 100}M` : n >= 1_000 ? `${Math.round(n / 1_000)}K` : `${n}`);
+  const tools: { label: string; sub: string; icon: React.ElementType; to: string }[] = [
+    { label: 'Requisitions & workplans', sub: `${pending} pending · ${approved} approved this month`, icon: FileText, to: '/admin/requests' },
+    { label: 'Contributions', sub: `UGX ${short(given)} from all teams this month`, icon: Coins, to: '/admin/contributions' },
+    { label: 'Team & duty', sub: team ? `${team.pct}% team attendance · ${team.people.length} serving` : 'Who serves, who’s on duty', icon: Users, to: '/admin/team' },
+    ...(user?.role === UserRole.ADMIN ? [{ label: 'Church profile', sub: 'Name, logo, contact & location', icon: Building2, to: '/admin/profile' }] : []),
+    { label: 'Subscription', sub: subscriptionSub(tenant), icon: Wallet, to: '/admin/subscription' },
   ];
+  const toolList = (
+    <div className="flex flex-col gap-3">
+      <SectionTitle title="Administration tools" />
+      <ListCard>
+        {tools.map((t) => (
+          <Row key={t.label} onClick={() => navigate(t.to)} lead={<Tile icon={t.icon} />} title={t.label} sub={t.sub} chevron />
+        ))}
+      </ListCard>
+    </div>
+  );
+  const account = (
+    <div className="flex flex-col gap-3">
+      <SectionTitle title="Account" />
+      <ListCard>
+        <Row
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          lead={<Tile icon={LogOut} tone="red" />}
+          title="Sign out"
+          sub={user?.email}
+        />
+      </ListCard>
+    </div>
+  );
   return (
     <>
-      <PageHeader title="More" subtitle="Inspect any department, plus Administration’s own tools." />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5 items-start">
-        <ListCard title="Inspect a department">
-          {DEPT_ORDER.map((code) => {
-            const m = DEPT_META[code];
-            return (
-              <Row
-                key={code}
-                onClick={() => navigate(m.to)}
-                lead={<Tile icon={m.icon} tone={m.tone} />}
-                title={DEPT_SHORT[code]}
-                sub="Inspect department"
-                chevron
-              />
-            );
-          })}
-        </ListCard>
-        <div className="flex flex-col gap-4">
-          <ListCard title="Administration tools">
-            {tools.map((t) => (
-              <Row
-                key={t.label}
-                onClick={() =>
-                  navigate(
-                    t.label === 'Subscription'
-                      ? '/admin/subscription'
-                      : t.label.startsWith('Team')
-                        ? '/admin/tools?view=team'
-                        : '/admin/tools'
-                  )
-                }
-                lead={<Tile icon={t.icon} />}
-                title={t.label}
-                sub={t.sub}
-                chevron
-              />
-            ))}
-          </ListCard>
-          <ListCard>
-            {user?.role === UserRole.ADMIN && (
-              <Row
-                onClick={() => navigate('/setup')}
-                lead={<Tile icon={Building2} tone="blue" />}
-                title="Church profile & setup"
-                sub="Logo, address, department heads & trial settings"
-                chevron
-              />
-            )}
-            <Row
-              onClick={() => navigate('/admin/approvals')}
-              lead={<Tile icon={Check} tone="lime" />}
-              title="Approvals"
-              sub="Requisitions and workplans waiting on you"
-              chevron
-            />
-            <Row
-              onClick={() => {
-                logout();
-                navigate('/login');
-              }}
-              lead={<Tile icon={LogOut} tone="red" />}
-              title="Sign out"
-              sub={user?.email}
-            />
-          </ListCard>
-        </div>
+      <PageHeader title="More" subtitle="Administration tools. Departments are on Overview." />
+      <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4 lg:gap-5 items-start">
+        {toolList}
+        {account}
       </div>
     </>
   );
@@ -1065,6 +1039,11 @@ export const AdministrationModule: React.FC = () => {
       <Route path="serving" element={<AdminServingMembersTab />} />
       <Route path="more" element={<AdminMoreView />} />
       <Route path="subscription" element={<SubscriptionPage />} />
+      <Route path="inspect/:key" element={<InspectDepartmentPage />} />
+      <Route path="requests" element={<RequestsPage />} />
+      <Route path="contributions" element={<ContributionsPage />} />
+      <Route path="team" element={<TeamAttendancePage />} />
+      <Route path="profile" element={<ChurchProfilePage />} />
       <Route path="tools" element={<HodMoreTab departmentCode={DepartmentCode.ADMIN} />} />
       <Route path="*" element={<Navigate to="overview" replace />} />
     </Routes>

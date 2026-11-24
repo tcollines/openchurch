@@ -15,6 +15,7 @@ import {
   LogOut,
   MoreHorizontal,
   Bell,
+  ChevronLeft,
   PhoneCall,
   ShieldCheck,
   Sparkles,
@@ -40,7 +41,7 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
     case UserRole.PLATFORM_ADMIN:
       return [
         { to: '/platform/tenants', label: 'Churches', shortLabel: 'Churches', icon: Building2 },
-        { to: '/admin/overview', label: 'Inspect a church', shortLabel: 'Inspect', icon: LayoutDashboard },
+        { to: '/platform/wallet', label: 'Subscriptions wallet', shortLabel: 'Wallet', icon: Wallet },
       ];
     case UserRole.ADMIN:
       return [
@@ -178,6 +179,19 @@ const ADMIN_DEPTS: { to: string; label: string; icon: React.ElementType; bg: str
 
 const isEnd = (to: string) => to.endsWith('/hod') || to.endsWith('/my-unit');
 
+/** Departments the church Administrator can open; `key` is also the Inspect page slug. */
+export const ADMIN_DEPT_VIEWS: { prefix: string; key: string; label: string; role: UserRole }[] = [
+  { prefix: '/finance', key: 'finance', label: 'Finance', role: UserRole.FINANCE_HOD },
+  { prefix: '/bacentas', key: 'bacentas', label: 'Bacentas', role: UserRole.BACENTA_HOD },
+  { prefix: '/airport-stars', key: 'airport-stars', label: 'Airport Stars', role: UserRole.AIRPORT_HOD },
+  { prefix: '/tele-pastoring', key: 'tele-pastoring', label: 'Tele Pastoring', role: UserRole.TELE_HOD },
+  { prefix: '/children', key: 'children', label: 'Children’s Church', role: UserRole.CHILDREN_HOD },
+  { prefix: '/campuses', key: 'campuses', label: 'Campuses', role: UserRole.CAMPUS_HOD },
+];
+
+/** Screens opened from More / Inspect: own back arrow, no greeting header, no bottom bar on phones. */
+const SUB_PAGE = /^\/(admin\/(inspect|requests|contributions|team|profile|subscription)|platform\/tenants\/(?!new)[^/]+)/;
+
 const today = () =>
   new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -190,15 +204,20 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
 
   if (!user) return <>{children}</>;
 
-  const navItems = getNavItemsForRole(user.role).filter(
-    (item) => !(user.role === UserRole.PLATFORM_ADMIN && item.to === '/admin/overview' && !tenant)
-  );
+  // The church Administrator inside a department sees that department's own navigation.
+  const adminDept =
+    user.role === UserRole.ADMIN ? ADMIN_DEPT_VIEWS.find((d) => pathname === d.prefix || pathname.startsWith(d.prefix + '/')) : undefined;
+  const navItems = adminDept
+    ? getNavItemsForRole(adminDept.role)
+    : getNavItemsForRole(user.role).filter((item) => !(user.role === UserRole.PLATFORM_ADMIN && item.to === '/admin/overview' && !tenant));
+  const subPage = !adminDept && SUB_PAGE.test(pathname);
+  const backToInspect = () => adminDept && navigate(`/admin/inspect/${adminDept.key}`);
   // Admin pages opened from More (Subscription, tools) keep the More tab highlighted.
   const moreAlias = (to: string) => to === '/admin/more' && /^\/admin\/(subscription|tools)/.test(pathname);
   // Step-by-step flows take the whole phone screen: no greeting header, no tab bar (desktop keeps the sidebar).
   const focusFlow = /^\/platform\/tenants\/new/.test(pathname);
-  const showTabBar = navItems.length > 1 && !focusFlow;
-  const deptLabel = DEPT_LABEL[user.role] ?? ROLE_LABELS[user.role];
+  const showTabBar = navItems.length > 1 && !focusFlow && !subPage;
+  const deptLabel = adminDept ? adminDept.label : (DEPT_LABEL[user.role] ?? ROLE_LABELS[user.role]);
 
   const signOut = () => {
     setSwitcherOpen(false);
@@ -218,6 +237,15 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
           </span>
         </div>
 
+        {adminDept && (
+          <button
+            type="button"
+            onClick={() => navigate('/admin/overview')}
+            className="flex items-center gap-2 h-10 px-3.5 rounded-[12px] text-sm font-semibold text-church-mist hover:bg-white/[0.05] hover:text-white"
+          >
+            <ChevronLeft className="w-[18px] h-[18px]" /> Administration
+          </button>
+        )}
         <div className="flex flex-col gap-1">
           <span className="px-3.5 pb-1 text-xs font-semibold uppercase tracking-[0.06em] text-[#6F8274]">{deptLabel}</span>
           <nav aria-label="Main" className="flex flex-col gap-1">
@@ -247,7 +275,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
           </nav>
         </div>
 
-        {user.role === UserRole.ADMIN && (
+        {user.role === UserRole.ADMIN && !adminDept && (
           <div className="flex flex-col gap-1">
             <span className="px-3.5 pb-1 text-xs font-semibold uppercase tracking-[0.06em] text-[#6F8274]">Departments</span>
             {ADMIN_DEPTS.map((d) => {
@@ -255,7 +283,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
               return (
                 <NavLink
                   key={d.to}
-                  to={d.to}
+                  to={`/admin/inspect/${ADMIN_DEPT_VIEWS.find((v) => d.to.startsWith(v.prefix))?.key ?? ''}`}
                   className={({ isActive }) =>
                     `flex items-center gap-3 h-10 pl-3.5 pr-3 rounded-[12px] text-sm font-medium no-underline transition ${
                       isActive ? 'bg-white/[0.08] text-white' : 'text-church-mist hover:bg-white/[0.05] hover:text-white'
@@ -306,7 +334,20 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
 
       <div className="md:pl-[248px] min-w-0 flex flex-col min-h-screen">
         {/* ── Phone: greeting header ── */}
-        <header className={`${focusFlow ? 'hidden' : 'md:hidden'} sticky top-0 z-20 bg-church-canvas/90 backdrop-blur-xl px-5 pt-[max(14px,env(safe-area-inset-top))] pb-2.5 flex flex-wrap items-center gap-3`}>
+        <header className={`${focusFlow || subPage ? 'hidden' : 'md:hidden'} sticky top-0 z-20 bg-church-canvas/90 backdrop-blur-xl px-5 pt-[max(14px,env(safe-area-inset-top))] pb-2.5 flex flex-wrap items-center gap-3`}>
+          {adminDept ? (
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${adminDept.label}`} className="w-11 h-11 shrink-0 rounded-[14px] bg-white flex items-center justify-center oc-press">
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <span className="min-w-0 flex flex-col gap-0.5">
+                <span className="font-display text-lg font-bold leading-tight truncate">{adminDept.label}</span>
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-church-emerald">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Administrator access
+                </span>
+              </span>
+            </div>
+          ) : (
           <button type="button" onClick={() => setSwitcherOpen(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Account and switch account">
             <span className="w-10 h-10 rounded-full bg-church-forest text-church-lime flex items-center justify-center font-display text-sm font-bold shrink-0">
               {initials(user.fullName)}
@@ -316,6 +357,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
               <span className="oc-sub truncate">{SHORT_ROLE[user.role]}</span>
             </span>
           </button>
+          )}
           <button
             type="button"
             aria-label="Notifications"
@@ -328,7 +370,21 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
 
         {/* ── Web: top bar ── */}
         <div className="hidden md:flex items-center justify-between gap-3 px-10 pt-6">
-          <span className="text-sm text-church-muted">{today()}</span>
+          {adminDept ? (
+            <div className="flex items-center gap-3 min-w-0">
+              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${adminDept.label}`} className="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center oc-press">
+                <ChevronLeft className="w-[18px] h-[18px]" />
+              </button>
+              <span className="flex flex-col">
+                <span className="font-display text-[17px] font-bold leading-tight">{adminDept.label}</span>
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-church-emerald">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Administrator access
+                </span>
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-church-muted">{today()}</span>
+          )}
           <div className="flex items-center gap-2.5">
             {canInstall && (
               <button
@@ -349,7 +405,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
           </div>
         </div>
 
-        <main className={`flex-1 w-full max-w-[1240px] mx-auto px-4 sm:px-5 md:px-10 ${focusFlow ? 'pt-[max(16px,env(safe-area-inset-top))]' : 'pt-2'} md:pt-6 ${showTabBar ? 'pb-32' : 'pb-10'} md:pb-14`}>
+        <main className={`flex-1 w-full max-w-[1240px] mx-auto px-4 sm:px-5 md:px-10 ${focusFlow || subPage ? 'pt-[max(16px,env(safe-area-inset-top))]' : 'pt-2'} md:pt-6 ${showTabBar ? 'pb-32' : 'pb-10'} md:pb-14`}>
           {!focusFlow && <PwaInstallBanner />}
           <div className="flex flex-col gap-4 md:gap-6">{children}</div>
         </main>

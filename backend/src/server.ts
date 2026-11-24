@@ -1397,6 +1397,73 @@ app.patch(
   }
 );
 
+// Network Council records a bank transfer, MoMo Pay code or cash payment and unlocks the church.
+app.post(
+  '/api/platform/tenants/:id/payments',
+  requireTenantAuth,
+  async (req: TenantRequest, res) => {
+    if (req.userRole !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ error: 'Platform Council access required' });
+      return;
+    }
+    try {
+      const tenantId = String(req.params.id);
+      const { months, method, referenceNumber, paidOn } = (req.body || {}) as {
+        months?: number;
+        method?: string;
+        referenceNumber?: string;
+        paidOn?: string;
+      };
+      const count = Math.min(12, Math.max(1, Math.floor(Number(months) || 1)));
+      const METHODS = ['MTN_MOMO', 'AIRTEL_MONEY', 'BANK_TRANSFER', 'CASH'];
+      const paymentMethod = METHODS.includes(String(method)) ? String(method) : 'BANK_TRANSFER';
+      const ref = (referenceNumber || '').trim() || `MANUAL-${Date.now().toString(36).toUpperCase()}`;
+
+      const result = await prisma.$transaction(async (tx) => {
+        const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) throw Object.assign(new Error('Church not found'), { status: 404 });
+        const dup = await tx.subscriptionPayment.findFirst({ where: { referenceNumber: ref } });
+        if (dup) throw Object.assign(new Error('That reference has already been recorded'), { status: 409 });
+
+        const { periodStart } = computeNextSubscriptionWindow(tenant);
+        let periodEnd = periodStart;
+        for (let i = 0; i < count; i++) periodEnd = addOneCalendarMonth(periodEnd);
+        const paidAt = paidOn && !isNaN(new Date(paidOn).getTime()) ? new Date(paidOn) : new Date();
+
+        const payment = await tx.subscriptionPayment.create({
+          data: {
+            tenantId,
+            amount: Number(tenant.monthlyFee) * count,
+            currency: tenant.currency || 'UGX',
+            paymentMethod,
+            referenceNumber: ref,
+            phoneOrAccount: '',
+            status: 'COMPLETED',
+            periodStart,
+            periodEnd,
+            recordedBy: req.userId ?? null,
+            completedAt: paidAt,
+            createdAt: paidAt,
+          },
+        });
+        const updated = await tx.tenant.update({
+          where: { id: tenantId },
+          data: { subscriptionStatus: 'ACTIVE', status: 'ACTIVE', subscriptionEndsAt: periodEnd, lastPaidAt: paidAt },
+        });
+        return { payment, tenant: updated };
+      });
+
+      res.status(201).json({
+        payment: serializeSubscriptionPayment(result.payment),
+        tenant: { ...result.tenant, monthlyFee: Number(result.tenant.monthlyFee) },
+      });
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status ?? 400;
+      res.status(status).json({ error: err instanceof Error ? err.message : 'Could not record the payment' });
+    }
+  }
+);
+
 // ─── 4b. GET STARTED: a new church's pastor finishes setting up ──────────────
 
 const requireChurchAdmin = (req: TenantRequest, res: express.Response): string | null => {

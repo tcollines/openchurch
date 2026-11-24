@@ -376,7 +376,14 @@ const toDateInput = (v?: string | null) => {
   return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 };
 
-const EditStep: React.FC<{ tenant: Tenant; onSaved: () => void }> = ({ tenant, onSaved }) => {
+export const EditStep: React.FC<{ tenant: Tenant; onSaved: () => void; title?: string; sub?: string; saveLabel?: string; hideTitle?: boolean }> = ({
+  tenant,
+  onSaved,
+  title = 'Edit church info',
+  sub = 'Fix anything that’s wrong. You can change this later in Administration → More.',
+  saveLabel = 'Save & continue',
+  hideTitle,
+}) => {
   const [logo, setLogo] = useState(hasLogo(tenant) ? tenant.logoUrl : '');
   const [name, setName] = useState(tenant.name);
   const [shortName, setShortName] = useState(tenant.shortName || '');
@@ -433,7 +440,7 @@ const EditStep: React.FC<{ tenant: Tenant; onSaved: () => void }> = ({ tenant, o
 
   return (
     <>
-      <PageTitle title="Edit church info" sub="Fix anything that’s wrong. You can change this later in Administration → More." />
+      {!hideTitle && <PageTitle title={title} sub={sub} />}
       <div className="flex flex-col lg:grid lg:grid-cols-2 gap-4 lg:gap-5 lg:items-start">
         <div className="flex flex-col gap-4 lg:gap-5">
           <Section icon={Building2} tone="lime" title="Church details" sub="How the church appears across Open Church">
@@ -514,7 +521,7 @@ const EditStep: React.FC<{ tenant: Tenant; onSaved: () => void }> = ({ tenant, o
       )}
       <div className="lg:max-w-[360px]">
         <PrimaryBtn icon={Check} onClick={save} busy={busy}>
-          Save &amp; continue
+          {saveLabel}
         </PrimaryBtn>
       </div>
     </>

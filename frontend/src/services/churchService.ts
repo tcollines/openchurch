@@ -2212,3 +2212,70 @@ export const HEAD_ROLE_BY_DEPT: Record<DepartmentCode, UserRole> = {
   [DepartmentCode.CHILDRENS_CHURCH]: UserRole.CHILDREN_HOD,
   [DepartmentCode.CAMPUSES]: UserRole.CAMPUS_HOD,
 };
+
+
+// ─── NETWORK COUNCIL: subscriptions wallet ────────────────────────────────────
+
+/** Read-only view of the local store (for summaries and dashboards). */
+export const readStore = (): OpenChurchDatabase => dbCache;
+
+export type ManualPaymentMethod = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'BANK_TRANSFER' | 'CASH';
+
+export const CouncilService = {
+  /** Records a bank / MoMo Pay / cash payment for a church and unlocks it. */
+  async recordManualPayment(
+    tenantId: string,
+    input: { months: number; method: ManualPaymentMethod; referenceNumber: string; paidOn: string }
+  ): Promise<SubscriptionPayment> {
+    try {
+      const res = await apiClient.post<{ payment: SubscriptionPayment; tenant: Tenant }>(
+        `/platform/tenants/${tenantId}/payments`,
+        input
+      );
+      return SubscriptionService.syncPaymentAndTenant(res.payment, res.tenant);
+    } catch (err) {
+      if (!/failed to fetch|networkerror|load failed/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      const tenant = dbCache.tenants.find((t) => t.id === tenantId);
+      if (!tenant) throw new Error('Church not found');
+      const st = SubscriptionService.getState(tenant)!;
+      const now = new Date();
+      const start = st.phase !== 'expired' && st.endsAt > now ? st.endsAt : now;
+      let end = start;
+      for (let i = 0; i < Math.max(1, input.months); i++) end = addOneMonth(end);
+      const paidAt = input.paidOn ? new Date(input.paidOn) : now;
+      const payment: SubscriptionPayment = {
+        id: uid('pay'),
+        tenantId,
+        amount: st.fee * Math.max(1, input.months),
+        currency: tenant.currency || 'UGX',
+        paymentMethod: (input.method === 'CASH' ? 'BANK_TRANSFER' : input.method) as SubscriptionPayment['paymentMethod'],
+        referenceNumber: input.referenceNumber || `MANUAL-${Date.now().toString(36).toUpperCase()}`,
+        phoneOrAccount: '',
+        status: 'COMPLETED',
+        periodStart: start.toISOString(),
+        periodEnd: end.toISOString(),
+        completedAt: paidAt.toISOString(),
+        createdAt: paidAt.toISOString(),
+      };
+      return SubscriptionService.syncPaymentAndTenant(payment, {
+        ...tenant,
+        status: 'ACTIVE',
+        subscriptionStatus: 'ACTIVE',
+        subscriptionEndsAt: end.toISOString(),
+        lastPaidAt: paidAt.toISOString(),
+      });
+    }
+  },
+
+  /** Suspends or reactivates a church (Network Council). */
+  async toggleChurch(tenantId: string): Promise<void> {
+    try {
+      const res = await apiClient.patch<{ data: Tenant }>(`/platform/tenants/${tenantId}/toggle`);
+      if (res?.data) PlatformService.syncBackendEntities({ tenant: { ...res.data, monthlyFee: Number(res.data.monthlyFee) } });
+      else PlatformService.toggleTenantStatus(tenantId);
+    } catch (err) {
+      if (!/failed to fetch|networkerror|load failed/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      PlatformService.toggleTenantStatus(tenantId);
+    }
+  },
+};

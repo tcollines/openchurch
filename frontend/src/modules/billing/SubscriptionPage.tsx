@@ -6,6 +6,7 @@ import { SubscriptionService } from '@/services/churchService';
 import { SubscriptionPayment } from '@/shared/types';
 import { churchShortName } from '@/shared/billing';
 import { Columns, num, PageHeader } from '@/components/ui/kit';
+import { BackRow } from '@/modules/platform/CouncilPages';
 import { BillingHistory, DueBanner, ManualPayCard, PaidView, PayCard, PlanCard } from './BillingParts';
 
 /** Admin → More → Subscription. Shows the trial / due state and how to pay. */
@@ -34,12 +35,8 @@ export const SubscriptionPage: React.FC = () => {
 
   return (
     <>
+      <BackRow label="More" onClick={() => navigate('/admin/more')} />
       <PageHeader
-        eyebrow={
-          <button type="button" onClick={() => navigate('/admin/more')} className="hover:underline">
-            More › Subscription
-          </button>
-        }
         title="Subscription"
         subtitle={`Open Church for ${churchShortName(tenant.name, tenant.shortName)} · UGX ${num(state.fee)} a month.`}
       />
