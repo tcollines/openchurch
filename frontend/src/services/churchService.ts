@@ -47,7 +47,8 @@ import {
   createDepartmentsForTenant,
   OpenChurchDatabase,
 } from './seedData';
-import { apiClient } from './apiClient';
+import { apiClient, getStoredToken } from './apiClient';
+import { enqueueSync, flushSync, getPendingOps } from './syncQueue';
 
 export interface PastorVerificationInfo {
   sent: boolean;
@@ -63,8 +64,16 @@ const STORAGE_KEY = 'open_church_multitenant_db_v2';
 type Listener = () => void;
 const listeners = new Set<Listener>();
 
-const uid = (prefix: string): string =>
-  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const uid = (_prefix?: string): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
 
 const loadDb = (): OpenChurchDatabase => {
   try {
@@ -129,8 +138,62 @@ const migrateDb = (db: OpenChurchDatabase): OpenChurchDatabase => {
 
 let dbCache: OpenChurchDatabase = migrateDb(loadDb());
 
+/** Record lists that are saved to the server through the sync queue (see syncQueue.ts). */
+const SYNCED_KEYS = [
+  'members',
+  'children',
+  'servingMembers',
+  'services',
+  'serviceAttendance',
+  'childAttendance',
+  'partners',
+  'deptContributions',
+  'workplans',
+  'requisitions',
+  'financeTransactions',
+  'fellowshipUnits',
+  'fellowshipMeetings',
+  'fellowshipMeetingAttendance',
+  'fellowshipOutreaches',
+  'teleReachouts',
+  'absenteeFollowups',
+  'soulsWon',
+  'soulFollowupWeeks',
+] as const;
+type SyncedKey = (typeof SYNCED_KEYS)[number];
+type WithId = { id: string; tenantId?: string };
+const listOf = (db: OpenChurchDatabase, k: SyncedKey) => ((db[k] as unknown as WithId[] | undefined) ?? []);
+
+/** While > 0, saves come from the server and must not be sent back to it. */
+let applyingServerData = 0;
+
+const snapshotSynced = () => {
+  const snap = {} as Record<SyncedKey, Map<string, string>>;
+  for (const k of SYNCED_KEYS) snap[k] = new Map(listOf(dbCache, k).map((r) => [r.id, JSON.stringify(r)]));
+  return snap;
+};
+
+/** Queue every record that was added, changed or deleted by a save. */
+const queueChanges = (before: Record<SyncedKey, Map<string, string>>) => {
+  const ops: Parameters<typeof enqueueSync>[0] = [];
+  for (const k of SYNCED_KEYS) {
+    const prev = before[k];
+    const seen = new Set<string>();
+    for (const r of listOf(dbCache, k)) {
+      if (!r?.id) continue;
+      seen.add(r.id);
+      const json = JSON.stringify(r);
+      if (prev.get(r.id) !== json) ops.push({ entity: k, op: 'upsert', id: r.id, record: JSON.parse(json) });
+    }
+    for (const id of prev.keys()) if (!seen.has(id)) ops.push({ entity: k, op: 'delete', id });
+  }
+  enqueueSync(ops);
+};
+
 const saveDb = (updater: (draft: OpenChurchDatabase) => void): void => {
+  const before = applyingServerData ? null : snapshotSynced();
   updater(dbCache);
+  if (before) queueChanges(before);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dbCache));
   } catch (err) {
@@ -418,8 +481,12 @@ export const PlatformService = {
   /** Pull live multi-tenant snapshot from backend Prisma -> Supabase PostgreSQL once authenticated. */
   async hydrateFromBackendBootstrap(): Promise<void> {
     try {
+      // Send anything still waiting first, so the server's copy is up to date.
+      await flushSync();
       const snap = await apiClient.get<Partial<OpenChurchDatabase>>('/bootstrap');
       if (!snap || !Array.isArray(snap.tenants) || !Array.isArray(snap.users)) return;
+      applyingServerData++;
+      try {
       saveDb((draft) => {
         draft.tenants = snap.tenants!.map((t) => ({
           ...t,
@@ -454,7 +521,18 @@ export const PlatformService = {
             amount: Number(p.amount),
           }));
         }
+        // Changes made on this phone that haven't reached the server yet stay visible.
+        for (const op of getPendingOps()) {
+          const k = op.entity as SyncedKey;
+          if (!SYNCED_KEYS.includes(k)) continue;
+          const list = listOf(draft, k).filter((r) => r.id !== op.id);
+          if (op.op === 'upsert' && op.record) list.push(op.record as unknown as WithId);
+          (draft as unknown as Record<string, WithId[]>)[k] = list;
+        }
       });
+      } finally {
+        applyingServerData--;
+      }
     } catch {
       // Ignore if token expired or offline
     }
@@ -800,6 +878,18 @@ export const AttendanceAndMemberService = {
     saveDb((draft) => {
       draft.members.push(member);
     });
+    void apiClient
+      .post('/members', {
+        id: member.id,
+        fullName: member.fullName,
+        phoneNumber: member.phoneNumber,
+        gender: member.gender,
+        residence: member.residence,
+        bacentaId: member.bacentaId,
+        campusId: member.campusId,
+        isFirstTimer: member.isFirstTimer,
+      })
+      .catch(() => {});
     return member;
   },
 
@@ -834,6 +924,17 @@ export const AttendanceAndMemberService = {
     saveDb((draft) => {
       draft.children.push(child);
     });
+    void apiClient
+      .post('/children', {
+        id: child.id,
+        fullName: child.fullName,
+        age: child.age,
+        ageGroup: child.ageGroup,
+        guardianName: child.guardianName,
+        guardianPhone: child.guardianPhone,
+        parentMemberId: child.parentMemberId,
+      })
+      .catch(() => {});
     return child;
   },
 
@@ -863,6 +964,14 @@ export const AttendanceAndMemberService = {
     saveDb((draft) => {
       draft.services.unshift(srv);
     });
+    void apiClient
+      .post('/services', {
+        id: srv.id,
+        title: srv.title,
+        serviceDate: srv.serviceDate,
+        category: srv.category,
+      })
+      .catch(() => {});
     return srv;
   },
 
@@ -1097,6 +1206,18 @@ export const FinanceService = {
     saveDb((draft) => {
       draft.partners.push(partner);
     });
+    void apiClient
+      .post('/partners', {
+        id: partner.id,
+        memberId: partner.memberId,
+        fullName: partner.fullName,
+        phoneNumber: partner.phoneNumber,
+        email: partner.email,
+        tierOrPledge: partner.tierOrPledge,
+        monthlyPledge: partner.monthlyPledge,
+        frequency: partner.frequency,
+      })
+      .catch(() => {});
     return partner;
   },
 
@@ -1110,7 +1231,7 @@ export const FinanceService = {
 
   recordServiceIncome(input: {
     tenantId: string;
-    serviceId: string;
+    serviceId: string | null;
     category: FinanceCategory.OFFERTORY | FinanceCategory.TITHE | FinanceCategory.PARTNERSHIP;
     partnerId?: string | null;
     memberId?: string | null;
@@ -1121,6 +1242,9 @@ export const FinanceService = {
     transactionDate: string;
     recordedBy: string;
   }): FinanceTransaction {
+    if (input.category === FinanceCategory.OFFERTORY && !input.serviceId) {
+      throw new Error('Offertory must be tied to a specific church service.');
+    }
     if (input.category === FinanceCategory.PARTNERSHIP && !input.partnerId) {
       throw new Error('Partnership entries must be tied to a registered Partner.');
     }
@@ -1138,8 +1262,8 @@ export const FinanceService = {
       tenantId: input.tenantId,
       type: FinanceType.INCOME,
       category: input.category,
-      sourceScope: FinanceScope.SERVICE,
-      serviceId: input.serviceId,
+      sourceScope: input.serviceId ? FinanceScope.SERVICE : FinanceScope.DEPARTMENT,
+      serviceId: input.serviceId || null,
       departmentId: finDept?.id ?? null,
       partnerId: input.partnerId ?? null,
       memberId: input.memberId ?? partner?.memberId ?? null,
@@ -1152,7 +1276,11 @@ export const FinanceService = {
         `${input.category.slice(0, 3)}-${Date.now().toString().slice(-5)}`,
       description:
         input.description?.trim() ||
-        (partner ? `Partnership — ${partner.fullName}` : `Service ${input.category}`),
+        (partner
+          ? `Partnership — ${partner.fullName}`
+          : input.serviceId
+            ? `Service ${input.category}`
+            : `${input.category}`),
       isVerified: true,
       transactionDate: input.transactionDate,
       recordedBy: input.recordedBy,
@@ -1162,6 +1290,20 @@ export const FinanceService = {
     saveDb((draft) => {
       draft.financeTransactions.unshift(tx);
     });
+    void apiClient
+      .post('/finance/service-income', {
+        id: tx.id,
+        serviceId: tx.serviceId,
+        category: tx.category,
+        partnerId: tx.partnerId,
+        memberId: tx.memberId,
+        amount: tx.amount,
+        paymentMethod: tx.paymentMethod,
+        referenceCode: tx.referenceCode,
+        description: tx.description,
+        transactionDate: tx.transactionDate,
+      })
+      .catch(() => {});
     return tx;
   },
 
@@ -1213,6 +1355,19 @@ export const FinanceService = {
         }
       }
     });
+    void apiClient
+      .post('/finance/expenses', {
+        id: tx.id,
+        serviceId: tx.serviceId,
+        departmentId: tx.departmentId,
+        requisitionId: tx.requisitionId,
+        amount: tx.amount,
+        paymentMethod: tx.paymentMethod,
+        referenceCode: tx.referenceCode,
+        description: tx.description,
+        transactionDate: tx.transactionDate,
+      })
+      .catch(() => {});
     return tx;
   },
 };
@@ -2277,5 +2432,43 @@ export const CouncilService = {
       if (!/failed to fetch|networkerror|load failed/i.test(err instanceof Error ? err.message : String(err))) throw err;
       PlatformService.toggleTenantStatus(tenantId);
     }
+  },
+};
+
+/** The church's shared member list, as managed by Administration and the Head of Airport Stars. */
+export const MemberDirectoryService = {
+  /** Adds to the member list on this device and saves it to the server in the background. */
+  async addMember(input: {
+    tenantId: string;
+    fullName: string;
+    phoneNumber: string;
+    gender: 'Male' | 'Female';
+    residence: string;
+    bacentaId?: string | null;
+    isFirstTimer: boolean;
+  }): Promise<Member> {
+    return AttendanceAndMemberService.registerMember(input);
+  },
+
+  /** Takes someone off the member list (or puts them back). Their attendance and giving records stay. */
+  async setActive(memberId: string, active: boolean, reason = ''): Promise<void> {
+    if (getStoredToken()) {
+      try {
+        await apiClient.patch(`/members/${memberId}/active`, { active, reason });
+      } catch (err) {
+        if (!isOffline(err)) throw err;
+      }
+    }
+    saveDb((draft) => {
+      const m = draft.members.find((x) => x.id === memberId);
+      if (!m) return;
+      m.isActive = active;
+      m.removedReason = active ? undefined : reason;
+      m.removedAt = active ? undefined : new Date().toISOString();
+    });
+  },
+
+  getMember(memberId: string): Member | null {
+    return dbCache.members.find((m) => m.id === memberId) ?? null;
   },
 };

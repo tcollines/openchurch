@@ -2,12 +2,11 @@ import React, { useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import {
   CalendarDays,
-  CheckCircle2,
+  CalendarPlus,
   Coins,
   HeartHandshake,
   Plus,
   Receipt,
-  UserPlus,
   Wallet,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -22,6 +21,7 @@ import {
   FinanceCategory,
   FinanceType,
   RequisitionStatus,
+  ServiceCategory,
   UserRole,
 } from '@/shared/enums';
 import { formatCurrency, formatDate } from '@/shared/formatters';
@@ -70,6 +70,8 @@ type ServiceIncomeCat =
   | FinanceCategory.TITHE
   | FinanceCategory.PARTNERSHIP;
 
+const OUTSIDE_SERVICE_VALUE = '__OUTSIDE_SERVICE__';
+
 const ServiceCollectionsView: React.FC = () => {
   useChurchStoreRefresh();
   const { user, tenant, activeTenantId } = useAuth();
@@ -80,6 +82,7 @@ const ServiceCollectionsView: React.FC = () => {
   const members = AttendanceAndMemberService.getMembers(activeTenantId);
 
   const [serviceId, setServiceId] = useState(services[0]?.id || '');
+  const [formServiceId, setFormServiceId] = useState<string>('');
   const [category, setCategory] = useState<ServiceIncomeCat>(
     FinanceCategory.OFFERTORY
   );
@@ -93,7 +96,14 @@ const ServiceCollectionsView: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
   const [quickPartnerOpen, setQuickPartnerOpen] = useState(false);
+  const [createServiceOpen, setCreateServiceOpen] = useState(false);
+  const [openCollectionAfterService, setOpenCollectionAfterService] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+
+  // Quick Create Service Form
+  const [srvTitle, setSrvTitle] = useState('Sunday Celebration Service');
+  const [srvDate, setSrvDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [srvCategory, setSrvCategory] = useState<ServiceCategory>(ServiceCategory.SUNDAY);
 
   // Quick Partner Form
   const [pName, setPName] = useState('');
@@ -104,10 +114,25 @@ const ServiceCollectionsView: React.FC = () => {
   const activeServiceId = serviceId || services[0]?.id || '';
   const activeService = services.find((s) => s.id === activeServiceId) ?? null;
 
-  const serviceTxs = FinanceService.getTransactions(
-    activeTenantId,
-    activeServiceId
-  ).filter((tx) => tx.type === FinanceType.INCOME);
+  // Resolve which service the entry form is currently targeting
+  const selectedEntryServiceId =
+    category === FinanceCategory.OFFERTORY
+      ? formServiceId && formServiceId !== OUTSIDE_SERVICE_VALUE
+        ? formServiceId
+        : activeServiceId
+      : formServiceId || activeServiceId;
+
+  const targetServiceObj =
+    selectedEntryServiceId && selectedEntryServiceId !== OUTSIDE_SERVICE_VALUE
+      ? services.find((s) => s.id === selectedEntryServiceId) ?? null
+      : null;
+
+  const allIncomeTxs = FinanceService.getTransactions(activeTenantId).filter(
+    (tx) => tx.type === FinanceType.INCOME
+  );
+  const serviceTxs = activeServiceId
+    ? allIncomeTxs.filter((tx) => tx.serviceId === activeServiceId)
+    : [];
 
   const offertoryTotal = serviceTxs
     .filter((t) => t.category === FinanceCategory.OFFERTORY)
@@ -119,10 +144,47 @@ const ServiceCollectionsView: React.FC = () => {
     .filter((t) => t.category === FinanceCategory.PARTNERSHIP)
     .reduce((s, t) => s + t.amount, 0);
 
+  const handleCreateService = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!srvTitle.trim() || !user) return;
+    const created = AttendanceAndMemberService.createService({
+      tenantId: activeTenantId,
+      title: srvTitle.trim(),
+      serviceDate: srvDate,
+      category: srvCategory,
+      createdBy: user.id,
+    });
+    setServiceId(created.id);
+    setFormServiceId(created.id);
+    setCreateServiceOpen(false);
+    if (openCollectionAfterService) {
+      setOpenCollectionAfterService(false);
+      setAddOpen(true);
+    }
+  };
+
   const handleRecordIncome = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!user || !activeServiceId) return;
+    if (!user) return;
+
+    const resolvedServiceId =
+      selectedEntryServiceId === OUTSIDE_SERVICE_VALUE
+        ? null
+        : selectedEntryServiceId || null;
+
+    if (category === FinanceCategory.OFFERTORY && !resolvedServiceId) {
+      setError('Offertory must be tied to a specific service. Select or create a service above.');
+      return;
+    }
+    if (
+      (category === FinanceCategory.TITHE || category === FinanceCategory.PARTNERSHIP) &&
+      !resolvedServiceId &&
+      selectedEntryServiceId !== OUTSIDE_SERVICE_VALUE
+    ) {
+      setError('Select a service for this collection (or create a service first).');
+      return;
+    }
     if (amount <= 0) {
       setError('Enter an amount greater than zero.');
       return;
@@ -135,7 +197,7 @@ const ServiceCollectionsView: React.FC = () => {
     try {
       FinanceService.recordServiceIncome({
         tenantId: activeTenantId,
-        serviceId: activeServiceId,
+        serviceId: resolvedServiceId,
         category,
         partnerId: category === FinanceCategory.PARTNERSHIP ? partnerId : null,
         memberId: category === FinanceCategory.TITHE && memberId ? memberId : null,
@@ -144,12 +206,16 @@ const ServiceCollectionsView: React.FC = () => {
         referenceCode,
         description: notes,
         transactionDate:
-          activeService?.serviceDate || new Date().toISOString().slice(0, 10),
+          targetServiceObj?.serviceDate || new Date().toISOString().slice(0, 10),
         recordedBy: user.id,
       });
+      if (resolvedServiceId) {
+        setServiceId(resolvedServiceId);
+      }
       setAmount(0);
       setReferenceCode('');
       setNotes('');
+      setAddOpen(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to save entry.');
     }
@@ -189,7 +255,10 @@ const ServiceCollectionsView: React.FC = () => {
 
   const entryForm = (
     <Card as="form" onSubmit={handleRecordIncome} className="!gap-4">
-      <SectionTitle title="Add a collection" aside={activeService ? formatDate(activeService.serviceDate) : undefined} />
+      <SectionTitle
+        title="Add a collection"
+        aside={targetServiceObj ? formatDate(targetServiceObj.serviceDate) : undefined}
+      />
       <Segment
         options={[
           { value: FinanceCategory.OFFERTORY, label: 'Offertory' },
@@ -198,10 +267,74 @@ const ServiceCollectionsView: React.FC = () => {
         ]}
         value={category}
         onChange={(v) => {
-          setCategory(v as ServiceIncomeCat);
+          const nextCat = v as ServiceIncomeCat;
+          setCategory(nextCat);
+          if (nextCat === FinanceCategory.OFFERTORY && formServiceId === OUTSIDE_SERVICE_VALUE) {
+            setFormServiceId(activeServiceId);
+          }
           setError('');
         }}
       />
+
+      <label className="flex flex-col gap-1.5">
+        <span className="flex items-center justify-between gap-2">
+          <span className="oc-label">
+            Service {category === FinanceCategory.OFFERTORY ? '*' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCreateServiceOpen(true)}
+            className="text-sm font-semibold text-church-emerald"
+          >
+            + New service
+          </button>
+        </span>
+        {services.length === 0 && category === FinanceCategory.OFFERTORY ? (
+          <div className="flex items-center justify-between gap-3 px-3.5 py-3 rounded-2xl bg-[#FCEFD9] text-[#7A4300]">
+            <span className="text-xs font-medium leading-snug">
+              No church service has been created yet. Create the service first to record Offertory.
+            </span>
+            <button
+              type="button"
+              onClick={() => setCreateServiceOpen(true)}
+              className="oc-btn !h-9 !px-3 !text-xs bg-white text-church-text shrink-0"
+            >
+              + Create
+            </button>
+          </div>
+        ) : (
+          <select
+            value={selectedEntryServiceId}
+            onChange={(e) => {
+              const v = e.target.value;
+              setFormServiceId(v);
+              if (v && v !== OUTSIDE_SERVICE_VALUE) {
+                setServiceId(v);
+              }
+              setError('');
+            }}
+            required={category === FinanceCategory.OFFERTORY}
+            className="oc-field"
+          >
+            {services.length === 0 && <option value="">Choose a service…</option>}
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title} · {formatDate(s.serviceDate)}
+              </option>
+            ))}
+            {category !== FinanceCategory.OFFERTORY && (
+              <option value={OUTSIDE_SERVICE_VALUE}>
+                Midweek / Outside a service (Mobile Money / Bank)
+              </option>
+            )}
+          </select>
+        )}
+        <span className="text-xs text-church-muted">
+          {category === FinanceCategory.OFFERTORY
+            ? 'Every offertory basket is tied directly to its church service.'
+            : 'Tied to the selected service so service totals and attendance reports match.'}
+        </span>
+      </label>
 
       {category === FinanceCategory.PARTNERSHIP && (
         <label className="flex flex-col gap-1.5">
@@ -265,20 +398,63 @@ const ServiceCollectionsView: React.FC = () => {
 
   return (
     <>
-      <PageHeader title="Service collections" subtitle="Record offertory, tithe and partnership for each service." />
+      <PageHeader
+        title="Service collections"
+        subtitle="Record offertory, tithe and partnership tied to each church service."
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              setOpenCollectionAfterService(false);
+              setCreateServiceOpen(true);
+            }}
+            className="oc-btn-dark"
+          >
+            <CalendarPlus className="w-[18px] h-[18px] text-church-lime" /> New service
+          </button>
+        }
+      />
       <Columns
         main={
           <>
-            {services.length > 0 && (
+            {services.length > 0 ? (
               <PickerRow
                 icon={CalendarDays}
-                label="Service"
+                label="Selected service"
                 value={activeServiceId}
-                onChange={setServiceId}
+                onChange={(v) => {
+                  setServiceId(v);
+                  setFormServiceId(v);
+                }}
                 options={services.map((s) => ({ value: s.id, label: `${s.title} · ${formatDate(s.serviceDate)}` }))}
               />
+            ) : (
+              <Card className="!flex-row items-center gap-3 !py-3.5">
+                <Tile icon={CalendarDays} tone="amber" />
+                <span className="flex-1 min-w-0 flex flex-col">
+                  <span className="text-[15px] font-semibold">No service selected yet</span>
+                  <span className="oc-sub">Create a service first to record offertory, tithe &amp; partnership.</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenCollectionAfterService(false);
+                    setCreateServiceOpen(true);
+                  }}
+                  className="oc-btn !h-10 !px-3.5 !text-sm bg-church-forest text-white shrink-0"
+                >
+                  <Plus className="w-4 h-4 text-church-lime" /> Create
+                </button>
+              </Card>
             )}
-            <DarkCard eyebrow={`Total collected · ${currency}`} title={<span className="tabular-nums">{num(grand)}</span>}>
+            <DarkCard
+              eyebrow={
+                activeService
+                  ? `${activeService.title} · ${formatDate(activeService.serviceDate)} · ${currency}`
+                  : `Total collected · ${currency}`
+              }
+              title={<span className="tabular-nums">{num(grand)}</span>}
+            >
               <div className="flex flex-col gap-2 lg:gap-0 [&>div]:max-lg:rounded-[14px] [&>div]:max-lg:bg-white/[0.07] [&>div]:max-lg:px-3 [&>div]:max-lg:border-0">
                 <DarkRow icon={Coins} title="Offertory" sub={pct(offertoryTotal)} value={num(offertoryTotal)} />
                 <DarkRow icon={Wallet} title="Tithe" sub={pct(titheTotal)} value={num(titheTotal)} />
@@ -289,24 +465,48 @@ const ServiceCollectionsView: React.FC = () => {
                   value={num(partnershipTotal)}
                 />
               </div>
-              <button type="button" onClick={() => setAddOpen(true)} className="lg:hidden oc-btn-primary self-start !h-12">
-                Add a collection
+              <button
+                type="button"
+                onClick={() => {
+                  if (services.length === 0) {
+                    setOpenCollectionAfterService(true);
+                    setCreateServiceOpen(true);
+                  } else {
+                    setFormServiceId(activeServiceId);
+                    setAddOpen(true);
+                  }
+                }}
+                className="lg:hidden oc-btn-primary self-start !h-12"
+              >
+                {services.length === 0 ? 'Create service & add collection' : 'Add a collection'}
               </button>
             </DarkCard>
             {serviceTxs.length === 0 ? (
-              <EmptyState icon={Coins} title="Nothing recorded yet" sub="Add the first collection for this service." />
+              <EmptyState
+                icon={Coins}
+                title={services.length === 0 ? 'Create your first service' : 'Nothing recorded for this service yet'}
+                sub={
+                  services.length === 0
+                    ? 'Every offertory and service collection is tied to a church service. Open today’s service to start recording.'
+                    : `Add offertory, tithe or partnership for ${activeService?.title ?? 'this service'}.`
+                }
+              />
             ) : (
-              <ListCard title="Entries" aside={currency}>
+              <ListCard
+                title={activeService ? `${activeService.title} entries` : 'Entries'}
+                aside={activeService ? `${formatDate(activeService.serviceDate)} · ${currency}` : currency}
+              >
                 {serviceTxs.map((tx) => {
                   const partner = partners.find((p) => p.id === tx.partnerId);
+                  const txService = services.find((s) => s.id === tx.serviceId);
                   return (
                     <Row
                       key={tx.id}
                       lead={<Tile icon={catIcon[tx.category] ?? Coins} tone={catTone[tx.category] ?? 'neutral'} />}
                       title={partner ? partner.fullName : tx.description || tx.category}
-                      sub={`${tx.category.charAt(0) + tx.category.slice(1).toLowerCase()} · ${tx.paymentMethod}${
-                        tx.referenceCode ? ` · ${tx.referenceCode}` : ''
-                      }`}
+                      sub={`${tx.category.charAt(0) + tx.category.slice(1).toLowerCase()}${
+                        txService ? ` · ${txService.title}` : ''
+                      } · ${tx.paymentMethod}${tx.referenceCode ? ` · ${tx.referenceCode}` : ''}`}
                       trail={<span className="oc-num text-[15px] whitespace-nowrap">+{num(tx.amount)}</span>}
                     />
                   );
@@ -317,8 +517,57 @@ const ServiceCollectionsView: React.FC = () => {
         }
         side={<div className="hidden lg:block">{entryForm}</div>}
       />
-      <MobileSheet open={addOpen} onClose={() => setAddOpen(false)} title="Add a collection" subtitle={activeService ? `${activeService.title} · ${formatDate(activeService.serviceDate)}` : undefined}>
+      <MobileSheet
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add a collection"
+        subtitle={activeService ? `${activeService.title} · ${formatDate(activeService.serviceDate)}` : 'Tied to church service'}
+      >
         <div className="[&>form]:!p-0 [&>form>div:first-child]:hidden">{entryForm}</div>
+      </MobileSheet>
+
+      {/* Quick Create Service Sheet */}
+      <MobileSheet
+        open={createServiceOpen}
+        onClose={() => {
+          setCreateServiceOpen(false);
+          setOpenCollectionAfterService(false);
+        }}
+        title="Create Church Service"
+        subtitle="Links offertory, tithe, partnership & attendance to this service"
+      >
+        <form onSubmit={handleCreateService} className="space-y-4">
+          <Segment
+            options={[
+              { value: ServiceCategory.SUNDAY, label: 'Sunday' },
+              { value: ServiceCategory.MIDWEEK, label: 'Midweek' },
+              { value: ServiceCategory.SPECIAL, label: 'Special' },
+            ]}
+            value={srvCategory}
+            onChange={(v) => {
+              const cat = v as ServiceCategory;
+              setSrvCategory(cat);
+              if (cat === ServiceCategory.SUNDAY && (!srvTitle || srvTitle.includes('Midweek') || srvTitle.includes('Special'))) {
+                setSrvTitle('Sunday Celebration Service');
+              } else if (cat === ServiceCategory.MIDWEEK && (!srvTitle || srvTitle.includes('Sunday') || srvTitle.includes('Special'))) {
+                setSrvTitle('Midweek Communion Service');
+              } else if (cat === ServiceCategory.SPECIAL && (!srvTitle || srvTitle.includes('Sunday') || srvTitle.includes('Midweek'))) {
+                setSrvTitle('Special Revival Service');
+              }
+            }}
+          />
+          <TextInput
+            label="Service Title"
+            value={srvTitle}
+            onChange={setSrvTitle}
+            placeholder="e.g. Sunday Celebration Service"
+            required
+          />
+          <DateInput label="Service Date" value={srvDate} onChange={setSrvDate} required />
+          <button type="submit" className="oc-btn-primary w-full">
+            {openCollectionAfterService ? 'Create Service & Record Collection' : 'Create & Select Service'}
+          </button>
+        </form>
       </MobileSheet>
 
       {/* Quick Register Partner Sheet */}

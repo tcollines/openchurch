@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createClient } from '@supabase/supabase-js';
-import { DepartmentCode, SoulStatus, UserRole } from '@prisma/client';
+import { DepartmentCode, Prisma, SoulStatus, UserRole } from '@prisma/client';
 import { prisma } from './lib/prisma';
 import {
   requireTenantAuth,
@@ -27,6 +27,33 @@ import {
 dotenv.config();
 
 const app = express();
+
+// Express 4 does not catch errors thrown inside async route handlers: a failed database write
+// would leave the request hanging and can crash the whole server. Route every handler's
+// rejected promise to the JSON error handler registered at the bottom of this file.
+(['get', 'post', 'patch', 'put', 'delete'] as const).forEach((method) => {
+  const original = (app[method] as (...args: unknown[]) => unknown).bind(app);
+  (app as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+    if (args.length < 2) return original(...args);
+    const [path, ...handlers] = args;
+    return original(
+      path,
+      ...handlers.map((h) =>
+        typeof h === 'function' && h.length < 4
+          ? (req: express.Request, res: express.Response, next: express.NextFunction) => {
+              try {
+                const out = (h as express.RequestHandler)(req, res, next) as unknown;
+                if (out && typeof (out as Promise<unknown>).catch === 'function') (out as Promise<unknown>).catch(next);
+              } catch (err) {
+                next(err);
+              }
+            }
+          : h
+      )
+    );
+  };
+});
+process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
 const allowedOrigins = (process.env.FRONTEND_ORIGIN || '')
   .split(',')
   .map((o) => o.trim().replace(/\/+$/, '').toLowerCase())
@@ -1730,28 +1757,52 @@ app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
 
 // ─── 5. MEMBERS, CHILDREN, SERVICES & CHECK-IN (AIRPORT STARS & KIDS) ─────────
 
+const CLIENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const asClientUuid = (val: unknown): string | undefined =>
+  typeof val === 'string' && CLIENT_UUID_RE.test(val.trim()) ? val.trim() : undefined;
+
 app.post('/api/members', requireTenantAuth, async (req: TenantRequest, res) => {
   const tenantId = resolveTargetTenantId(req);
   if (!tenantId) {
     res.status(400).json({ error: 'Missing tenant scope' });
     return;
   }
-  const { fullName, phoneNumber, gender, residence, bacentaId, campusId, isFirstTimer } =
+  const { id, fullName, phoneNumber, gender, residence, bacentaId, campusId, isFirstTimer } =
     req.body;
+  const clientId = asClientUuid(id);
   const member = await prisma.member.create({
     data: {
+      ...(clientId ? { id: clientId } : {}),
       tenantId,
       fullName,
       phoneNumber,
       gender: gender || 'Female',
       residence: residence || 'General',
-      bacentaId: bacentaId || null,
-      campusId: campusId || null,
+      bacentaId: asClientUuid(bacentaId) || null,
+      campusId: asClientUuid(campusId) || null,
       isFirstTimer: Boolean(isFirstTimer),
       joinedAt: new Date().toISOString().slice(0, 10),
     },
   });
   res.status(201).json({ data: member });
+});
+
+// Remove a member from (or restore them to) the church's member list. Records are kept.
+app.patch('/api/members/:id/active', requireTenantAuth, async (req: TenantRequest, res) => {
+  if (!['ADMIN', 'AIRPORT_HOD', 'PLATFORM_ADMIN'].includes(String(req.userRole))) {
+    res.status(403).json({ error: 'Only Administration or the Head of Airport Stars can change the member list' });
+    return;
+  }
+  const tenantId = resolveTargetTenantId(req);
+  const existing = await prisma.member.findUnique({ where: { id: String(req.params.id) } });
+  if (!existing || (req.userRole !== 'PLATFORM_ADMIN' && existing.tenantId !== tenantId)) {
+    res.status(404).json({ error: 'Member not found' });
+    return;
+  }
+  const active = Boolean(req.body?.active);
+  const member = await prisma.member.update({ where: { id: existing.id }, data: { isActive: active } });
+  console.log(`[members] ${active ? 'restored' : 'removed'} ${member.id} by ${req.userRole}${req.body?.reason ? ` · reason: ${String(req.body.reason).slice(0, 120)}` : ''}`);
+  res.json({ data: member });
 });
 
 app.post('/api/children', requireTenantAuth, async (req: TenantRequest, res) => {
@@ -1760,16 +1811,18 @@ app.post('/api/children', requireTenantAuth, async (req: TenantRequest, res) => 
     res.status(400).json({ error: 'Missing tenant scope' });
     return;
   }
-  const { fullName, age, ageGroup, guardianName, guardianPhone, parentMemberId } = req.body;
+  const { id, fullName, age, ageGroup, guardianName, guardianPhone, parentMemberId } = req.body;
+  const clientId = asClientUuid(id);
   const child = await prisma.child.create({
     data: {
+      ...(clientId ? { id: clientId } : {}),
       tenantId,
       fullName,
       age: Number(age),
       ageGroup,
       guardianName,
       guardianPhone,
-      parentMemberId: parentMemberId || null,
+      parentMemberId: asClientUuid(parentMemberId) || null,
       joinedAt: new Date().toISOString().slice(0, 10),
     },
   });
@@ -1782,14 +1835,16 @@ app.post('/api/services', requireTenantAuth, async (req: TenantRequest, res) => 
     res.status(400).json({ error: 'Missing tenant scope' });
     return;
   }
-  const { title, serviceDate, category } = req.body;
+  const { id, title, serviceDate, category } = req.body;
+  const clientId = asClientUuid(id);
   const srv = await prisma.service.create({
     data: {
+      ...(clientId ? { id: clientId } : {}),
       tenantId,
       title,
       serviceDate,
       category: category || 'SUNDAY',
-      createdBy: req.userId,
+      createdBy: asClientUuid(req.userId) || null,
     },
   });
   res.status(201).json({ data: srv });
@@ -1876,12 +1931,14 @@ app.post('/api/partners', requireTenantAuth, async (req: TenantRequest, res) => 
     res.status(400).json({ error: 'Missing tenant scope' });
     return;
   }
-  const { memberId, fullName, phoneNumber, email, tierOrPledge, monthlyPledge, frequency } =
+  const { id, memberId, fullName, phoneNumber, email, tierOrPledge, monthlyPledge, frequency } =
     req.body;
+  const clientId = asClientUuid(id);
   const partner = await prisma.partner.create({
     data: {
+      ...(clientId ? { id: clientId } : {}),
       tenantId,
-      memberId: memberId || null,
+      memberId: asClientUuid(memberId) || null,
       fullName,
       phoneNumber,
       email: email || '',
@@ -1903,6 +1960,7 @@ app.post(
       return;
     }
     const {
+      id,
       serviceId,
       category,
       partnerId,
@@ -1914,7 +1972,15 @@ app.post(
       transactionDate,
     } = req.body;
 
-    if (category === 'PARTNERSHIP' && !partnerId) {
+    const cleanServiceId = asClientUuid(serviceId) || null;
+    if (category === 'OFFERTORY' && !cleanServiceId) {
+      res.status(400).json({
+        error: 'Offertory must be tied to a specific church service.',
+      });
+      return;
+    }
+
+    if (category === 'PARTNERSHIP' && !asClientUuid(partnerId)) {
       res.status(400).json({
         error: 'Partnership entries must be tied to a registered Partner.',
       });
@@ -1925,22 +1991,24 @@ app.post(
       where: { tenantId_code: { tenantId, code: 'FINANCE' } },
     });
 
+    const clientId = asClientUuid(id);
     const tx = await prisma.financeTransaction.create({
       data: {
+        ...(clientId ? { id: clientId } : {}),
         tenantId,
         type: 'INCOME',
         category,
-        sourceScope: 'SERVICE',
-        serviceId,
+        sourceScope: cleanServiceId ? 'SERVICE' : 'DEPARTMENT',
+        serviceId: cleanServiceId,
         departmentId: finDept?.id ?? null,
-        partnerId: category === 'PARTNERSHIP' ? partnerId : null,
-        memberId: memberId || null,
+        partnerId: category === 'PARTNERSHIP' ? asClientUuid(partnerId) || null : null,
+        memberId: asClientUuid(memberId) || null,
         amount: Number(amount),
         paymentMethod: paymentMethod || 'Cash',
         referenceCode: referenceCode || '',
-        description: description || `Service ${category}`,
+        description: description || (cleanServiceId ? `Service ${category}` : `${category}`),
         transactionDate,
-        recordedBy: req.userId,
+        recordedBy: asClientUuid(req.userId) || null,
       },
     });
     res.status(201).json({ data: tx });
@@ -1954,6 +2022,7 @@ app.post('/api/finance/expenses', requireTenantAuth, async (req: TenantRequest, 
     return;
   }
   const {
+    id,
     serviceId,
     departmentId,
     requisitionId,
@@ -1964,22 +2033,28 @@ app.post('/api/finance/expenses', requireTenantAuth, async (req: TenantRequest, 
     transactionDate,
   } = req.body;
 
+  const clientId = asClientUuid(id);
+  const cleanServiceId = asClientUuid(serviceId) || null;
+  const cleanDeptId = asClientUuid(departmentId) || null;
+  const cleanReqId = asClientUuid(requisitionId) || null;
+
   const tx = await prisma.$transaction(async (db) => {
     const created = await db.financeTransaction.create({
       data: {
+        ...(clientId ? { id: clientId } : {}),
         tenantId,
         type: 'EXPENSE',
-        category: requisitionId ? 'REQUISITION_PAYOUT' : 'OTHER_EXPENSE',
-        sourceScope: serviceId ? 'SERVICE' : 'DEPARTMENT',
-        serviceId: serviceId || null,
-        departmentId: departmentId || null,
-        requisitionId: requisitionId || null,
+        category: cleanReqId ? 'REQUISITION_PAYOUT' : 'OTHER_EXPENSE',
+        sourceScope: cleanServiceId ? 'SERVICE' : 'DEPARTMENT',
+        serviceId: cleanServiceId,
+        departmentId: cleanDeptId,
+        requisitionId: cleanReqId,
         amount: Number(amount),
         paymentMethod: paymentMethod || 'Cash',
         referenceCode: referenceCode || '',
         description,
         transactionDate,
-        recordedBy: req.userId,
+        recordedBy: asClientUuid(req.userId) || null,
       },
     });
 
@@ -2790,6 +2865,156 @@ app.post('/api/webhooks/marzpay', handleMarzPayWebhook);
 app.post('/webhooks/marzpay', handleMarzPayWebhook);
 
 const PORT = Number(process.env.PORT) || 5000;
+
+// ─── 9. OFFLINE-FIRST SYNC: every department's saved records → PostgreSQL ────
+// The app saves on the phone first, then sends each change here. Records keep the id the
+// phone gave them, so sending the same change twice is safe.
+
+const SYNC_MODELS: Record<string, Prisma.ModelName> = {
+  members: 'Member',
+  children: 'Child',
+  servingMembers: 'ServingMember',
+  services: 'Service',
+  serviceAttendance: 'ServiceAttendance',
+  childAttendance: 'ChildAttendance',
+  partners: 'Partner',
+  deptContributions: 'DeptContribution',
+  workplans: 'Workplan',
+  requisitions: 'Requisition',
+  financeTransactions: 'FinanceTransaction',
+  fellowshipUnits: 'FellowshipUnit',
+  fellowshipMeetings: 'FellowshipMeeting',
+  fellowshipMeetingAttendance: 'FellowshipMeetingAttendance',
+  fellowshipOutreaches: 'FellowshipOutreach',
+  teleReachouts: 'TeleReachout',
+  absenteeFollowups: 'AbsenteeFollowup',
+  soulsWon: 'SoulWon',
+  soulFollowupWeeks: 'SoulFollowupWeek',
+};
+
+type SyncOp = { entity: string; op: 'upsert' | 'delete'; id: string; record?: Record<string, unknown> };
+type ModelDelegate = {
+  findUnique: (a: unknown) => Promise<Record<string, unknown> | null>;
+  findFirst: (a: unknown) => Promise<Record<string, unknown> | null>;
+  upsert: (a: unknown) => Promise<unknown>;
+  update: (a: unknown) => Promise<unknown>;
+  deleteMany: (a: unknown) => Promise<unknown>;
+};
+type TxClient = Prisma.TransactionClient;
+const delegateFor = (db: TxClient, model: string) =>
+  (db as unknown as Record<string, ModelDelegate>)[model.charAt(0).toLowerCase() + model.slice(1)];
+
+const modelFields = (model: string) => Prisma.dmmf.datamodel.models.find((m) => m.name === model)?.fields ?? [];
+
+/** Keep only real database columns and give each the type Postgres expects. */
+const toColumns = (model: string, record: Record<string, unknown>) => {
+  const data: Record<string, unknown> = {};
+  for (const f of modelFields(model)) {
+    if (f.kind === 'object' || !(f.name in record) || f.name === 'tenantId') continue;
+    let v = record[f.name];
+    if (v === undefined) continue;
+    if (v === '' && !f.isRequired && f.type !== 'String') v = null;
+    if (v !== null) {
+      if (f.type === 'Int') v = Math.round(Number(v));
+      else if (f.type === 'Float' || f.type === 'Decimal') v = Number(v);
+      else if (f.type === 'Boolean') v = Boolean(v);
+      else if (f.type === 'DateTime') {
+        const d = new Date(String(v));
+        if (Number.isNaN(d.getTime())) continue;
+        v = d;
+      }
+    }
+    data[f.name] = v;
+  }
+  return data;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function applySyncOp(db: TxClient, tenantId: string, op: SyncOp): Promise<void> {
+  const model = SYNC_MODELS[op.entity];
+  if (!model) throw Object.assign(new Error(`Unknown record type: ${op.entity}`), { permanent: true });
+  if (!UUID_RE.test(op.id)) throw Object.assign(new Error(`Record id ${op.id} is not a UUID`), { permanent: true });
+  const delegate = delegateFor(db, model);
+  const existing = await delegate.findUnique({ where: { id: op.id } });
+  if (existing && existing.tenantId !== tenantId) {
+    throw Object.assign(new Error('Record belongs to another church'), { permanent: true });
+  }
+  if (op.op === 'delete') {
+    await delegate.deleteMany({ where: { id: op.id, tenantId } });
+    return;
+  }
+  const rec = { ...(op.record || {}) };
+  if (model === 'Requisition' && Array.isArray(rec.items)) rec.itemsJson = rec.items;
+  const data = toColumns(model, rec);
+  delete data.id;
+  try {
+    await delegate.upsert({ where: { id: op.id }, create: { ...data, id: op.id, tenantId }, update: data });
+  } catch (err) {
+    // Same check-in recorded on another phone under a different id: update that row instead.
+    const target = (err as { code?: string; meta?: { target?: string[] | string } }).meta?.target;
+    if ((err as { code?: string }).code !== 'P2002' || !Array.isArray(target)) throw err;
+    const where: Record<string, unknown> = { tenantId };
+    for (const col of target) {
+      const field = modelFields(model).find((f) => f.name === col || f.dbName === col);
+      if (field) where[field.name] = data[field.name];
+    }
+    const twin = await delegate.findFirst({ where });
+    if (!twin) throw err;
+    await delegate.update({ where: { id: twin.id }, data });
+  }
+  if (model === 'Workplan' && Array.isArray(rec.items)) {
+    await db.workplanItem.deleteMany({ where: { workplanId: op.id } });
+    const items = (rec.items as Record<string, unknown>[]).map((it) => ({
+      ...(typeof it.id === 'string' && UUID_RE.test(it.id) ? { id: it.id } : {}),
+      workplanId: op.id,
+      activity: String(it.activity ?? ''),
+      itemName: String(it.itemName ?? ''),
+      quantity: Math.round(Number(it.quantity ?? 0)),
+      unitCost: Number(it.unitCost ?? 0),
+      totalCost: Number(it.totalCost ?? Number(it.quantity ?? 0) * Number(it.unitCost ?? 0)),
+    }));
+    if (items.length) await db.workplanItem.createMany({ data: items });
+  }
+}
+
+app.post('/api/sync', requireTenantAuth, async (req: TenantRequest, res) => {
+  const ops = (Array.isArray(req.body?.ops) ? req.body.ops : []).slice(0, 100) as (SyncOp & { tenantId?: string })[];
+  const results: { ok: boolean; retry?: boolean; error?: string }[] = [];
+  for (const op of ops) {
+    const tenantId =
+      req.userRole === 'PLATFORM_ADMIN' ? String(op.record?.tenantId || op.tenantId || req.tenantId || '') : req.tenantId || '';
+    if (!tenantId) {
+      results.push({ ok: false, error: 'Missing church' });
+      continue;
+    }
+    try {
+      await prisma.$transaction((db) => applySyncOp(db, tenantId, op));
+      results.push({ ok: true });
+    } catch (err) {
+      const code = (err as { code?: string }).code || '';
+      const name = err instanceof Error ? err.constructor.name : '';
+      const permanent = Boolean((err as { permanent?: boolean }).permanent);
+      // Try again later when a linked record (service, member, department…) hasn't arrived yet
+      // (P2003) or the database is briefly unreachable. Bad data is reported straight away.
+      const transient =
+        ['P2003', 'P2025', 'P2024', 'P2034', 'P1001', 'P1002', 'P1008', 'P1017'].includes(code) ||
+        ['PrismaClientInitializationError', 'PrismaClientRustPanicError', 'PrismaClientUnknownRequestError'].includes(name);
+      results.push({ ok: false, retry: !permanent && transient, error: err instanceof Error ? err.message.trim().split('\n').slice(-1)[0] : 'Failed' });
+      console.error(`[sync] ${op.op} ${op.entity} ${op.id} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+  res.json({ results });
+});
+
+// JSON error responses for anything a route throws (see the async wrapper at the top).
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  void _next;
+  console.error('[route error]', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: err instanceof Error ? err.message : 'Server error' });
+});
+
 app.listen(PORT, () => {
   console.log(`Open Church Backend (Prisma + Supabase Postgres) running on http://localhost:${PORT}`);
 });
