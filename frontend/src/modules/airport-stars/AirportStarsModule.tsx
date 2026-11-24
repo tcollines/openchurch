@@ -62,6 +62,7 @@ import {
   TextInput,
 } from '@/components/ui/FormControls';
 import { HodMoreTab } from '@/components/hod-more/HodMoreTab';
+import { Highlight, SearchTakeover } from '@/components/ui/SearchTakeover';
 import { AirportMemberPage, AirportMembersPage } from './AirportMembers';
 
 const AirportServiceCheckInView: React.FC = () => {
@@ -417,6 +418,60 @@ const AirportServiceCheckInView: React.FC = () => {
     </DarkCard>
   );
 
+  const memberRow = (member: (typeof members)[number], highlight = '') => {
+      const isCheckedIn = checkedInSet.has(member.id);
+      return (
+        <Row
+          key={member.id}
+          lead={<Avatar name={member.fullName} />}
+          title={
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="truncate"><Highlight text={member.fullName} query={highlight} /></span>
+              {member.isFirstTimer && <Badge kind="warn">First timer</Badge>}
+            </span>
+          }
+          sub={`${member.phoneNumber} · ${member.residence}`}
+          trail={
+            isCheckedIn ? (
+              <span className="flex items-center gap-1.5 shrink-0">
+                <span className="h-10 px-3.5 rounded-2xl bg-church-posSoft text-[#0E5A37] text-sm font-bold flex items-center gap-1.5">
+                  <Check className="w-4 h-4" /> In
+                </span>
+                {canUndo && activeServiceId && (
+                  <button
+                    type="button"
+                    onClick={() => AttendanceAndMemberService.undoMemberCheckIn(activeServiceId, member.id)}
+                    aria-label={`Undo check-in for ${member.fullName}`}
+                    className="oc-press w-10 h-10 rounded-full text-church-muted hover:bg-church-negSoft hover:text-church-neg flex items-center justify-center"
+                  >
+                    <RotateCcw className="w-[18px] h-[18px]" />
+                  </button>
+                )}
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={!activeServiceId}
+                onClick={() =>
+                  user &&
+                  activeServiceId &&
+                  AttendanceAndMemberService.checkInMember({
+                    tenantId: activeTenantId,
+                    serviceId: activeServiceId,
+                    memberId: member.id,
+                    checkedInBy: user.id,
+                  })
+                }
+                className="oc-btn-dark !h-10 !px-4 !text-sm shrink-0"
+              >
+                Check in
+              </button>
+            )
+          }
+        />
+      );
+  };
+
   return (
     <>
       <PageHeader
@@ -446,7 +501,41 @@ const AirportServiceCheckInView: React.FC = () => {
         main={
           <>
             <div className="lg:hidden">{liveCard}</div>
-            <SearchField value={search} onChange={setSearch} placeholder="Search name, phone or area" />
+            <SearchTakeover
+              value={search}
+              onChange={setSearch}
+              placeholder="Search name, phone or area"
+              context={activeService ? `${activeService.title} · ${serviceAtt.length} checked in` : undefined}
+              count={search.trim() ? filteredMembers.length : undefined}
+            >
+              {search.trim() ? (
+                <>
+                  {filteredMembers.length > 0 && (
+                    <section className="bg-white rounded-[20px] px-4">
+                      <div className="divide-y divide-church-line">{filteredMembers.slice(0, 60).map((m) => memberRow(m, search))}</div>
+                    </section>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewName(search.trim());
+                      setRegisterMemberOpen(true);
+                    }}
+                    className="oc-press flex items-center gap-3 min-h-[56px] px-3 rounded-2xl border-[1.5px] border-dashed border-[#C9CEC6] text-left"
+                  >
+                    <span className="w-10 h-10 shrink-0 rounded-full bg-white flex items-center justify-center">
+                      <UserPlus className="w-[18px] h-[18px]" />
+                    </span>
+                    <span className="flex-1 flex flex-col">
+                      <span className="text-[15px] font-semibold">Not on the list? Register them</span>
+                      <span className="oc-sub">Adds them and checks them in</span>
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <p className="m-0 oc-sub">Type a few letters to find someone.</p>
+              )}
+            </SearchTakeover>
             <Chips
               items={[
                 { value: 'all', label: 'Everyone', count: filteredMembers.length },
@@ -478,59 +567,7 @@ const AirportServiceCheckInView: React.FC = () => {
               />
             ) : (
               <ListCard>
-                {listMembers.map((member) => {
-                  const isCheckedIn = checkedInSet.has(member.id);
-                  return (
-                    <Row
-                      key={member.id}
-                      lead={<Avatar name={member.fullName} />}
-                      title={
-                        <span className="flex items-center gap-2 min-w-0">
-                          <span className="truncate">{member.fullName}</span>
-                          {member.isFirstTimer && <Badge kind="warn">First timer</Badge>}
-                        </span>
-                      }
-                      sub={`${member.phoneNumber} · ${member.residence}`}
-                      trail={
-                        isCheckedIn ? (
-                          <span className="flex items-center gap-1.5 shrink-0">
-                            <span className="h-10 px-3.5 rounded-2xl bg-church-posSoft text-[#0E5A37] text-sm font-bold flex items-center gap-1.5">
-                              <Check className="w-4 h-4" /> In
-                            </span>
-                            {canUndo && activeServiceId && (
-                              <button
-                                type="button"
-                                onClick={() => AttendanceAndMemberService.undoMemberCheckIn(activeServiceId, member.id)}
-                                aria-label={`Undo check-in for ${member.fullName}`}
-                                className="oc-press w-10 h-10 rounded-full text-church-muted hover:bg-church-negSoft hover:text-church-neg flex items-center justify-center"
-                              >
-                                <RotateCcw className="w-[18px] h-[18px]" />
-                              </button>
-                            )}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={!activeServiceId}
-                            onClick={() =>
-                              user &&
-                              activeServiceId &&
-                              AttendanceAndMemberService.checkInMember({
-                                tenantId: activeTenantId,
-                                serviceId: activeServiceId,
-                                memberId: member.id,
-                                checkedInBy: user.id,
-                              })
-                            }
-                            className="oc-btn-dark !h-10 !px-4 !text-sm shrink-0"
-                          >
-                            Check in
-                          </button>
-                        )
-                      }
-                    />
-                  );
-                })}
+                {listMembers.map((member) => memberRow(member))}
               </ListCard>
             )}
           </>

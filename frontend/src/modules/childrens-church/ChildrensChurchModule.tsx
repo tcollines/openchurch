@@ -41,6 +41,7 @@ import {
   num,
   firstName,
 } from '@/components/ui/kit';
+import { Highlight, SearchTakeover } from '@/components/ui/SearchTakeover';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
 import {
@@ -136,6 +137,78 @@ const KidsCheckInView: React.FC = () => {
     return !att ? 'pending' : att.checkedOutAt ? 'home' : 'in';
   };
   const shownKids = filteredKids.filter((c) => kidFilter === 'all' || stateOf(c.id) === kidFilter);
+  const childRow = (child: (typeof shownKids)[number], highlight = '') => {
+      const att = kidsAtt.find((x) => x.childId === child.id);
+      return (
+        <div key={child.id} className="flex flex-wrap items-center gap-3 py-3">
+          <Avatar name={child.fullName} />
+          <span className="flex-1 min-w-[150px] flex flex-col gap-0.5">
+            <span className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold truncate"><Highlight text={child.fullName} query={highlight} /></span>
+              {att?.soulWon && <Badge kind="lime">Saved</Badge>}
+            </span>
+            <span className="oc-sub truncate">
+              {child.age} yrs · {child.guardianName}
+            </span>
+          </span>
+          <span className="flex items-center gap-2 shrink-0">
+            {!att ? (
+              <button
+                type="button"
+                disabled={!activeServiceId}
+                onClick={() =>
+                  user &&
+                  activeServiceId &&
+                  AttendanceAndMemberService.checkInChild({
+                    tenantId: activeTenantId,
+                    serviceId: activeServiceId,
+                    childId: child.id,
+                    checkedInBy: user.id,
+                  })
+                }
+                className="oc-btn-dark !h-10 !px-4 !text-sm"
+              >
+                Check in
+              </button>
+            ) : att.checkedOutAt ? (
+              <span className="h-10 px-3.5 rounded-2xl bg-church-posSoft text-[#0E5A37] text-sm font-bold flex items-center gap-1.5">
+                <Home className="w-4 h-4" /> Gone home
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    activeService &&
+                    !att.soulWon &&
+                    AttendanceAndMemberService.markChildSoulWon({
+                      tenantId: activeTenantId,
+                      serviceId: activeService.id,
+                      child,
+                      serviceTitle: activeService.title,
+                    })
+                  }
+                  aria-label={att.soulWon ? `${child.fullName} gave their life to Christ` : `Mark ${child.fullName} as saved`}
+                  aria-pressed={att.soulWon}
+                  className={`oc-press w-10 h-10 rounded-full flex items-center justify-center ${
+                    att.soulWon ? 'bg-church-lime text-church-forest' : 'bg-church-canvas text-church-muted'
+                  }`}
+                >
+                  <Heart className="w-[18px] h-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => AttendanceAndMemberService.checkOutChild(activeServiceId, child.id)}
+                  className="oc-btn !h-10 !px-4 !text-sm bg-church-warnSoft text-[#7A4300]"
+                >
+                  Check out to {firstName(child.guardianName)}
+                </button>
+              </>
+            )}
+          </span>
+        </div>
+      );
+  };
 
   return (
     <>
@@ -179,7 +252,25 @@ const KidsCheckInView: React.FC = () => {
                 ]}
               />
             </Card>
-            <SearchField value={search} onChange={setSearch} placeholder="Search child or guardian" />
+            <SearchTakeover
+              value={search}
+              onChange={setSearch}
+              placeholder="Search child or guardian"
+              context={activeService ? `${activeService.title} · ${checkedInCount} checked in` : undefined}
+              count={search.trim() ? filteredKids.length : undefined}
+            >
+              {search.trim() ? (
+                filteredKids.length ? (
+                  <section className="bg-white rounded-[20px] px-4">
+                    <div className="divide-y divide-church-line">{filteredKids.slice(0, 60).map((c) => childRow(c, search))}</div>
+                  </section>
+                ) : (
+                  <p className="m-0 oc-sub">No child or guardian matches “{search.trim()}”.</p>
+                )
+              ) : (
+                <p className="m-0 oc-sub">Type a few letters to find a child or guardian.</p>
+              )}
+            </SearchTakeover>
             <Chips
               items={[
                 { value: 'all', label: 'Everyone', count: filteredKids.length },
@@ -194,78 +285,7 @@ const KidsCheckInView: React.FC = () => {
               <EmptyState icon={Search} title="No children here" />
             ) : (
               <ListCard>
-                {shownKids.map((child) => {
-                  const att = kidsAtt.find((x) => x.childId === child.id);
-                  return (
-                    <div key={child.id} className="flex flex-wrap items-center gap-3 py-3">
-                      <Avatar name={child.fullName} />
-                      <span className="flex-1 min-w-[150px] flex flex-col gap-0.5">
-                        <span className="flex items-center gap-2">
-                          <span className="text-[15px] font-semibold truncate">{child.fullName}</span>
-                          {att?.soulWon && <Badge kind="lime">Saved</Badge>}
-                        </span>
-                        <span className="oc-sub truncate">
-                          {child.age} yrs · {child.guardianName}
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-2 shrink-0">
-                        {!att ? (
-                          <button
-                            type="button"
-                            disabled={!activeServiceId}
-                            onClick={() =>
-                              user &&
-                              activeServiceId &&
-                              AttendanceAndMemberService.checkInChild({
-                                tenantId: activeTenantId,
-                                serviceId: activeServiceId,
-                                childId: child.id,
-                                checkedInBy: user.id,
-                              })
-                            }
-                            className="oc-btn-dark !h-10 !px-4 !text-sm"
-                          >
-                            Check in
-                          </button>
-                        ) : att.checkedOutAt ? (
-                          <span className="h-10 px-3.5 rounded-2xl bg-church-posSoft text-[#0E5A37] text-sm font-bold flex items-center gap-1.5">
-                            <Home className="w-4 h-4" /> Gone home
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                activeService &&
-                                !att.soulWon &&
-                                AttendanceAndMemberService.markChildSoulWon({
-                                  tenantId: activeTenantId,
-                                  serviceId: activeService.id,
-                                  child,
-                                  serviceTitle: activeService.title,
-                                })
-                              }
-                              aria-label={att.soulWon ? `${child.fullName} gave their life to Christ` : `Mark ${child.fullName} as saved`}
-                              aria-pressed={att.soulWon}
-                              className={`oc-press w-10 h-10 rounded-full flex items-center justify-center ${
-                                att.soulWon ? 'bg-church-lime text-church-forest' : 'bg-church-canvas text-church-muted'
-                              }`}
-                            >
-                              <Heart className="w-[18px] h-[18px]" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => AttendanceAndMemberService.checkOutChild(activeServiceId, child.id)}
-                              className="oc-btn !h-10 !px-4 !text-sm bg-church-warnSoft text-[#7A4300]"
-                            >
-                              Check out to {firstName(child.guardianName)}
-                            </button>
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })}
+                {shownKids.map((child) => childRow(child))}
               </ListCard>
             )}
           </>
