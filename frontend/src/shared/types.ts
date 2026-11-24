@@ -93,6 +93,9 @@ export interface Member {
   joinedAt: string;
   isActive: boolean;
   createdAt: string;
+  /** Kept on this device when someone is taken off the member list. */
+  removedReason?: string;
+  removedAt?: string;
 }
 
 export interface Child {

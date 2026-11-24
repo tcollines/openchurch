@@ -62,6 +62,7 @@ import {
   TextInput,
 } from '@/components/ui/FormControls';
 import { HodMoreTab } from '@/components/hod-more/HodMoreTab';
+import { AirportMemberPage, AirportMembersPage } from './AirportMembers';
 
 const AirportServiceCheckInView: React.FC = () => {
   useChurchStoreRefresh();
@@ -649,6 +650,8 @@ export const AirportStarsModule: React.FC = () => {
           )
         }
       />
+      <Route path="members" element={isMemberLocked ? <Navigate to="/airport-stars/checkin" replace /> : <AirportMembersPage />} />
+      <Route path="members/:id" element={isMemberLocked ? <Navigate to="/airport-stars/checkin" replace /> : <AirportMemberPage />} />
       <Route path="*" element={<Navigate to="checkin" replace />} />
     </Routes>
   );

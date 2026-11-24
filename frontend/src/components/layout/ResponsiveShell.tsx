@@ -80,7 +80,8 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
     case UserRole.AIRPORT_HOD:
       return [
         { to: '/airport-stars/checkin', label: 'Check-in', shortLabel: 'Check-In', icon: CheckCircle2 },
-        { to: '/airport-stars/attendance', label: 'Team & duty', shortLabel: 'Team', icon: Users },
+        { to: '/airport-stars/members', label: 'Members', shortLabel: 'Members', icon: Users },
+        { to: '/airport-stars/attendance', label: 'Team & duty', shortLabel: 'Team', icon: ShieldCheck },
         { to: '/airport-stars/more', label: 'More', shortLabel: 'More', icon: MoreHorizontal },
       ];
     case UserRole.AIRPORT_MEMBER:
@@ -190,7 +191,7 @@ export const ADMIN_DEPT_VIEWS: { prefix: string; key: string; label: string; rol
 ];
 
 /** Screens opened from More / Inspect: own back arrow, no greeting header, no bottom bar on phones. */
-const SUB_PAGE = /^\/(admin\/(inspect|requests|contributions|team|profile|subscription)|platform\/tenants\/(?!new)[^/]+)/;
+const SUB_PAGE = /^\/(admin\/(inspect|requests|contributions|team|profile|subscription)|platform\/tenants\/(?!new)[^/]+|airport-stars\/members\/[^/]+)/;
 
 const today = () =>
   new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
