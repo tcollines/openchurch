@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
-  Wallet,
+  Wallet, ClipboardCheck,
 } from 'lucide-react';
 import { Avatar, initials } from '@/components/ui/kit';
 import { NotificationBell } from '@/modules/notifications/Notifications';
@@ -55,6 +55,7 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
       return [
         { to: '/finance/collections', label: 'Service collections', shortLabel: 'Collections', icon: Coins },
         { to: '/finance/partners', label: 'Partners', shortLabel: 'Partners', icon: HeartHandshake },
+        { to: '/finance/approvals', label: 'Approvals', shortLabel: 'Approvals', icon: ClipboardCheck },
         { to: '/finance/outflows', label: 'Expenses & payouts', shortLabel: 'Expenses', icon: Wallet },
         { to: '/finance/more', label: 'More', shortLabel: 'More', icon: MoreHorizontal },
       ];
@@ -62,6 +63,7 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
       return [
         { to: '/finance/collections', label: 'Service collections', shortLabel: 'Collections', icon: Coins },
         { to: '/finance/partners', label: 'Partners', shortLabel: 'Partners', icon: HeartHandshake },
+        { to: '/finance/approvals', label: 'Approvals', shortLabel: 'Approvals', icon: ClipboardCheck },
         { to: '/finance/outflows', label: 'Expenses & payouts', shortLabel: 'Expenses', icon: Wallet },
       ];
     case UserRole.BACENTA_HOD:

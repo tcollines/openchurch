@@ -172,6 +172,7 @@ model Tenant {
   soulsWon                    SoulWon[]
   soulFollowupWeeks           SoulFollowupWeek[]
   subscriptionPayments        SubscriptionPayment[]
+  accountabilities            RequisitionAccountability[]
 
   @@map("tenants")
 }
@@ -476,6 +477,8 @@ model Requisition {
   service             Service?             @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   financeTransactions FinanceTransaction[]
 
+  accountability RequisitionAccountability?
+
   @@index([tenantId, departmentId])
   @@map("requisitions")
 }
@@ -680,4 +683,30 @@ model SubscriptionPayment {
   @@map("subscription_payments")
 }
 
+/// What a department bought with a requisition payout, with receipt photos (Supabase Storage paths).
+model RequisitionAccountability {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  requisitionId   String    @unique @map("requisition_id") @db.Uuid
+  departmentId    String    @map("department_id") @db.Uuid
+  itemsJson       Json      @default("[]") @map("items_json")
+  amountReceived  Float     @default(0) @map("amount_received")
+  amountSpent     Float     @default(0) @map("amount_spent")
+  balanceReturned Float     @default(0) @map("balance_returned")
+  balanceMethod   String    @default("") @map("balance_method")
+  receiptPaths    Json      @default("[]") @map("receipt_paths")
+  notes           String    @default("")
+  status          String    @default("SUBMITTED") // SUBMITTED | ACCEPTED | QUERIED
+  reviewNote      String    @default("") @map("review_note")
+  submittedBy     String?   @map("submitted_by") @db.Uuid
+  submittedAt     DateTime  @default(now()) @map("submitted_at")
+  reviewedBy      String?   @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, departmentId])
+  @@map("requisition_accountabilities")
+}

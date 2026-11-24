@@ -83,7 +83,7 @@ export const buildNotifications = (user: User | null, tenant: Tenant | null): No
       out.push({ id: `req-${r.status}-${r.id}`, kind: 'approval', icon: FileText, tone: ok ? 'green' : 'red', title: `Your requisition was ${ok ? 'approved' : 'rejected'}`, sub: ok ? `${r.title} · Finance will pay ${cur} ${short(requisitionAsk(r))}` : `${r.title}${r.rejectionReason ? ` · ${r.rejectionReason}` : ''}`, at: r.createdAt, to: myMore });
     }
     if (r.status === RequisitionStatus.APPROVED && user.role === UserRole.FINANCE_HOD) {
-      out.push({ id: `req-topay-${r.id}`, kind: 'money', icon: Receipt, tone: 'amber', title: `Ready to pay out ${r.requisitionNumber}`, sub: `${label(r.departmentId)} · ${cur} ${short(requisitionAsk(r) - r.amountPaid)}`, at: r.createdAt, to: '/finance/expenses' });
+      out.push({ id: `req-topay-${r.id}`, kind: 'money', icon: Receipt, tone: 'amber', title: `Ready to pay out ${r.requisitionNumber}`, sub: `${label(r.departmentId)} · ${cur} ${short(requisitionAsk(r) - r.amountPaid)}`, at: r.createdAt, to: '/finance/approvals' });
     }
   }
   for (const w of db.workplans.filter((x) => x.tenantId === t && recent(x.createdAt))) {
@@ -93,6 +93,20 @@ export const buildNotifications = (user: User | null, tenant: Tenant | null): No
     if (w.departmentId === myDeptId && w.status !== WorkflowStatus.SUBMITTED && w.status !== WorkflowStatus.DRAFT) {
       const ok = w.status === WorkflowStatus.APPROVED;
       out.push({ id: `wp-${w.status}-${w.id}`, kind: 'approval', icon: ClipboardList, tone: ok ? 'green' : 'red', title: `Your workplan was ${ok ? 'approved' : 'rejected'}`, sub: `${w.title || w.monthLabel}${ok ? ` · ${cur} ${short(Number(w.totalApproved))}` : ''}`, at: w.createdAt, to: myMore });
+    }
+  }
+
+  // Accountabilities
+  const isFinance = user.role === UserRole.FINANCE_HOD || user.role === UserRole.FINANCE_OFFICER;
+  for (const a of (db.requisitionAccountabilities || []).filter((x) => x.tenantId === t)) {
+    const r = db.requisitions.find((x) => x.id === a.requisitionId);
+    const num = r?.requisitionNumber ?? '';
+    if (a.status === 'SUBMITTED' && isFinance && recent(a.submittedAt)) {
+      out.push({ id: `acc-${a.id}-${a.submittedAt}`, kind: 'approval', icon: Receipt, tone: 'amber', title: `${label(a.departmentId)} accounted for ${num}`, sub: `Spent ${cur} ${short(a.amountSpent)} of ${short(a.amountReceived)} · ${a.receiptPaths.length} receipt${a.receiptPaths.length === 1 ? '' : 's'}`, at: a.submittedAt, to: '/finance/approvals' });
+    }
+    if (a.status !== 'SUBMITTED' && a.departmentId === myDeptId && a.reviewedAt && recent(a.reviewedAt)) {
+      const ok = a.status === 'ACCEPTED';
+      out.push({ id: `acc-${a.status}-${a.id}`, kind: 'approval', icon: Receipt, tone: ok ? 'green' : 'red', title: ok ? `Finance accepted your accountability for ${num}` : `Finance queried your accountability for ${num}`, sub: ok ? 'You can send your next requisition' : a.reviewNote || 'Open it to see what needs fixing', at: a.reviewedAt, to: myMore });
     }
   }
 

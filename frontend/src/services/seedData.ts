@@ -19,6 +19,7 @@ import {
   SoulFollowupWeek,
   SoulWon,
   SubscriptionPayment,
+  RequisitionAccountability,
   TeleReachout,
   Tenant,
   User,
@@ -49,6 +50,7 @@ export interface OpenChurchDatabase {
   soulsWon: SoulWon[];
   soulFollowupWeeks: SoulFollowupWeek[];
   subscriptionPayments: SubscriptionPayment[];
+  requisitionAccountabilities: RequisitionAccountability[];
 }
 
 export const createDepartmentsForTenant = (tenantId: string): Department[] => [
@@ -140,5 +142,6 @@ export const buildInitialSeedDatabase = (): OpenChurchDatabase => ({
   absenteeFollowups: [],
   soulsWon: [],
   soulFollowupWeeks: [],
+  requisitionAccountabilities: [],
   subscriptionPayments: [],
 });

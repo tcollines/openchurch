@@ -29,6 +29,8 @@ import {
   Member,
   Partner,
   Requisition,
+  RequisitionAccountability,
+  AccountabilityItem,
   RequisitionLineItem,
   Service,
   ServiceAttendance,
@@ -104,6 +106,10 @@ const migrateDb = (db: OpenChurchDatabase): OpenChurchDatabase => {
     db.subscriptionPayments = [];
     changed = true;
   }
+  if (!Array.isArray(db.requisitionAccountabilities)) {
+    db.requisitionAccountabilities = [];
+    changed = true;
+  }
   if (!db.users.some((u) => u.email.toLowerCase() === 'tcollines004@gmail.com')) {
     db.users.unshift({
       id: 'u-platform-collines',
@@ -163,6 +169,7 @@ const SYNCED_KEYS = [
   'absenteeFollowups',
   'soulsWon',
   'soulFollowupWeeks',
+  'requisitionAccountabilities',
 ] as const;
 type SyncedKey = (typeof SYNCED_KEYS)[number];
 type WithId = { id: string; tenantId?: string };
@@ -519,6 +526,7 @@ export const PlatformService = {
         if (Array.isArray(snap.absenteeFollowups)) draft.absenteeFollowups = snap.absenteeFollowups;
         if (Array.isArray(snap.soulsWon)) draft.soulsWon = snap.soulsWon;
         if (Array.isArray(snap.soulFollowupWeeks)) draft.soulFollowupWeeks = snap.soulFollowupWeeks;
+        if (Array.isArray(snap.requisitionAccountabilities)) draft.requisitionAccountabilities = snap.requisitionAccountabilities;
         if (Array.isArray(snap.subscriptionPayments)) {
           draft.subscriptionPayments = snap.subscriptionPayments.map((p) => ({
             ...p,
@@ -831,6 +839,33 @@ export const DepartmentService = {
       draft.requisitions.unshift(req);
     });
     return req;
+  },
+
+  /** A department fixes a rejected requisition and sends it back to Administration. */
+  resubmitRequisition(
+    requisitionId: string,
+    input: {
+      title: string;
+      items: RequisitionLineItem[];
+      workplanId?: string | null;
+      serviceId?: string | null;
+      deptContributionAmount?: number;
+    }
+  ): void {
+    const totalAmount = input.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0);
+    saveDb((draft) => {
+      const req = draft.requisitions.find((r) => r.id === requisitionId);
+      if (!req || req.status !== RequisitionStatus.REJECTED) return;
+      req.title = input.title.trim();
+      req.items = input.items;
+      req.totalAmount = totalAmount;
+      req.deptContributionAmount = Math.min(totalAmount, Math.max(0, Math.round(input.deptContributionAmount || 0)));
+      req.workplanId = input.workplanId ?? req.workplanId;
+      req.serviceId = input.serviceId ?? req.serviceId;
+      req.status = RequisitionStatus.PENDING_ADMIN;
+      req.rejectionReason = '';
+      req.requestedAt = new Date().toISOString().slice(0, 10);
+    });
   },
 
   reviewRequisition(
@@ -2485,5 +2520,132 @@ export const MemberDirectoryService = {
 
   getMember(memberId: string): Member | null {
     return dbCache.members.find((m) => m.id === memberId) ?? null;
+  },
+};
+
+/* ── Requisition accountability ─────────────────────────────────────────────
+   After Finance pays a requisition the department shows what it bought, with receipts.
+   A department can't send a new requisition while a paid one is unaccounted for. */
+export const AccountabilityService = {
+  getAll(tenantId: string, departmentId?: string): RequisitionAccountability[] {
+    return (dbCache.requisitionAccountabilities ?? [])
+      .filter((a) => a.tenantId === tenantId && (!departmentId || a.departmentId === departmentId))
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  },
+
+  forRequisition(requisitionId: string): RequisitionAccountability | null {
+    return (dbCache.requisitionAccountabilities ?? []).find((a) => a.requisitionId === requisitionId) ?? null;
+  },
+
+  /** Paid requisitions of a department still waiting for an accountability (or queried by Finance). */
+  dueFor(tenantId: string, departmentId: string): Requisition[] {
+    return dbCache.requisitions
+      .filter((r) => r.tenantId === tenantId && r.departmentId === departmentId && r.status === RequisitionStatus.PAID)
+      .filter((r) => {
+        const acc = AccountabilityService.forRequisition(r.id);
+        return !acc || acc.status === 'QUERIED';
+      })
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  },
+
+  submit(input: {
+    tenantId: string;
+    requisition: Requisition;
+    items: AccountabilityItem[];
+    balanceMethod: string;
+    receiptPaths: string[];
+    notes: string;
+    submittedBy: string;
+  }): RequisitionAccountability {
+    const received = Number(input.requisition.amountPaid || requisitionAsk(input.requisition));
+    const spent = input.items.reduce((a, i) => a + Number(i.amount || 0), 0);
+    // The department's own contribution is spent alongside Finance's payout; any leftover goes back to Finance (never more than it paid).
+    const available = received + Number(input.requisition.deptContributionAmount || 0);
+    const leftover = Math.min(received, Math.max(0, available - spent));
+    const existing = AccountabilityService.forRequisition(input.requisition.id);
+    const now = new Date().toISOString();
+    const record: RequisitionAccountability = {
+      id: existing?.id ?? uid('acc'),
+      tenantId: input.tenantId,
+      requisitionId: input.requisition.id,
+      departmentId: input.requisition.departmentId,
+      items: input.items,
+      amountReceived: received,
+      amountSpent: spent,
+      balanceReturned: leftover,
+      balanceMethod: leftover > 0 ? input.balanceMethod : '',
+      receiptPaths: input.receiptPaths,
+      notes: input.notes.trim(),
+      status: 'SUBMITTED',
+      reviewNote: '',
+      submittedBy: input.submittedBy,
+      submittedAt: now,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: existing?.createdAt ?? now,
+    };
+    saveDb((draft) => {
+      draft.requisitionAccountabilities = draft.requisitionAccountabilities.filter((a) => a.id !== record.id);
+      draft.requisitionAccountabilities.unshift(record);
+    });
+    return record;
+  },
+
+  review(accountabilityId: string, decision: 'ACCEPTED' | 'QUERIED', note: string, reviewedBy: string): void {
+    saveDb((draft) => {
+      const a = draft.requisitionAccountabilities.find((x) => x.id === accountabilityId);
+      if (!a) return;
+      a.status = decision;
+      a.reviewNote = note.trim();
+      a.reviewedBy = reviewedBy;
+      a.reviewedAt = new Date().toISOString();
+    });
+  },
+};
+
+/* ── Receipt photos → Supabase Storage (through the backend) ──────────────── */
+const shrinkImage = (file: File, max = 1600): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the photo'));
+    reader.onload = () => {
+      const src = String(reader.result);
+      if (!file.type.startsWith('image/')) return resolve(src);
+      const img = new Image();
+      img.onerror = () => resolve(src);
+      img.onload = () => {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
+  });
+
+export const ReceiptService = {
+  /** Uploads a receipt and returns its storage path (offline: the photo itself as a data URL). */
+  async upload(file: File): Promise<string> {
+    if (file.size > 12 * 1024 * 1024) throw new Error('That file is too big. Use a photo or PDF under 12 MB.');
+    const dataUrl = await shrinkImage(file);
+    if (!getStoredToken()) return dataUrl;
+    try {
+      const res = await apiClient.post<{ path: string }>('/receipts', { dataUrl, fileName: file.name.replace(/\.[^.]+$/, '') });
+      return res.path;
+    } catch (err) {
+      // Offline, or storage not set up on the server yet: keep the photo with the record so nobody is stuck.
+      if (isOffline(err) || /not configured/i.test(err instanceof Error ? err.message : String(err))) return dataUrl;
+      throw err;
+    }
+  },
+
+  /** A short-lived link to view a stored receipt. */
+  async viewUrl(path: string): Promise<string> {
+    if (path.startsWith('data:') || path.startsWith('http')) return path;
+    const res = await apiClient.get<{ url: string }>(`/receipts/url?path=${encodeURIComponent(path)}`);
+    return res.url;
   },
 };

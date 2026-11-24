@@ -364,3 +364,32 @@ export interface SoulFollowupWeek {
   completedAt: string;
 }
 
+
+export interface AccountabilityItem {
+  description: string;
+  quantity: number;
+  amount: number;
+}
+
+/** What a department bought with a requisition payout, with receipts. */
+export interface RequisitionAccountability {
+  id: string;
+  tenantId: string;
+  requisitionId: string;
+  departmentId: string;
+  items: AccountabilityItem[];
+  amountReceived: number;
+  amountSpent: number;
+  balanceReturned: number;
+  balanceMethod: string;
+  /** Supabase Storage paths (or, offline, image data URLs). */
+  receiptPaths: string[];
+  notes: string;
+  status: 'SUBMITTED' | 'ACCEPTED' | 'QUERIED';
+  reviewNote: string;
+  submittedBy: string | null;
+  submittedAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}

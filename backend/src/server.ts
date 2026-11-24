@@ -1033,6 +1033,7 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       soulsWon,
       soulFollowupWeeks,
       subscriptionPaymentsRaw,
+      accountabilitiesRaw,
     ] = await Promise.all([
       isPlatform
         ? prisma.tenant.findMany({ orderBy: { name: 'asc' } })
@@ -1076,6 +1077,7 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
         where: tenantFilter,
         orderBy: { createdAt: 'desc' },
       }),
+      prisma.requisitionAccountability.findMany({ where: tenantFilter }),
     ]);
 
     const requisitions = requisitionsRaw.map((r) => ({
@@ -1112,6 +1114,11 @@ app.get('/api/bootstrap', requireTenantAuth, async (req: TenantRequest, res) => 
       soulsWon,
       soulFollowupWeeks,
       subscriptionPayments,
+      requisitionAccountabilities: accountabilitiesRaw.map((a) => ({
+        ...a,
+        items: Array.isArray(a.itemsJson) ? a.itemsJson : [],
+        receiptPaths: Array.isArray(a.receiptPaths) ? a.receiptPaths : [],
+      })),
     });
   } catch (err: unknown) {
     res.status(500).json({
@@ -2894,6 +2901,7 @@ const SYNC_MODELS: Record<string, Prisma.ModelName> = {
   absenteeFollowups: 'AbsenteeFollowup',
   soulsWon: 'SoulWon',
   soulFollowupWeeks: 'SoulFollowupWeek',
+  requisitionAccountabilities: 'RequisitionAccountability',
 };
 
 type SyncOp = { entity: string; op: 'upsert' | 'delete'; id: string; record?: Record<string, unknown> };
@@ -2950,6 +2958,22 @@ async function applySyncOp(db: TxClient, tenantId: string, op: SyncOp): Promise<
   }
   const rec = { ...(op.record || {}) };
   if (model === 'Requisition' && Array.isArray(rec.items)) rec.itemsJson = rec.items;
+  if (model === 'RequisitionAccountability' && Array.isArray(rec.items)) rec.itemsJson = rec.items;
+  // One requisition at a time: a department must account for its last payout before asking again.
+  if (model === 'Requisition' && !existing && rec.departmentId) {
+    const unaccounted = await db.requisition.findFirst({
+      where: {
+        tenantId,
+        departmentId: String(rec.departmentId),
+        status: 'PAID',
+        OR: [{ accountability: null }, { accountability: { status: 'QUERIED' } }],
+      },
+      select: { requisitionNumber: true },
+    });
+    if (unaccounted) {
+      throw Object.assign(new Error(`Account for ${unaccounted.requisitionNumber} before sending a new requisition`), { permanent: true });
+    }
+  }
   const data = toColumns(model, rec);
   delete data.id;
   try {
@@ -3009,6 +3033,68 @@ app.post('/api/sync', requireTenantAuth, async (req: TenantRequest, res) => {
     }
   }
   res.json({ results });
+});
+
+
+// ─── 10. RECEIPTS (accountability photos) → Supabase Storage ─────────────────
+const RECEIPT_BUCKET = 'receipts';
+let receiptBucketReady = false;
+const ensureReceiptBucket = async () => {
+  if (receiptBucketReady || !supabaseAdmin) return;
+  const { data } = await supabaseAdmin.storage.getBucket(RECEIPT_BUCKET);
+  if (!data) {
+    await supabaseAdmin.storage.createBucket(RECEIPT_BUCKET, { public: false, fileSizeLimit: 8 * 1024 * 1024 });
+  }
+  receiptBucketReady = true;
+};
+
+app.post('/api/receipts', requireTenantAuth, async (req: TenantRequest, res) => {
+  if (!supabaseAdmin) {
+    res.status(503).json({ error: 'Receipt storage is not configured (SUPABASE_SERVICE_ROLE_KEY missing)' });
+    return;
+  }
+  const tenantId = resolveTargetTenantId(req);
+  const { dataUrl, fileName } = req.body as { dataUrl?: string; fileName?: string };
+  const m = /^data:([\w/+.-]+);base64,(.+)$/.exec(dataUrl || '');
+  if (!tenantId || !m) {
+    res.status(400).json({ error: 'Send the receipt as a data URL' });
+    return;
+  }
+  const contentType = m[1];
+  if (!/^image\/|^application\/pdf$/.test(contentType)) {
+    res.status(400).json({ error: 'Receipts must be a photo or a PDF' });
+    return;
+  }
+  const buffer = Buffer.from(m[2], 'base64');
+  if (buffer.length > 8 * 1024 * 1024) {
+    res.status(413).json({ error: 'Receipt is larger than 8 MB' });
+    return;
+  }
+  await ensureReceiptBucket();
+  const ext = contentType === 'application/pdf' ? 'pdf' : contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const safe = String(fileName || 'receipt').replace(/[^\w.-]+/g, '-').slice(0, 40);
+  const path = `${tenantId}/${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}-${safe}.${ext}`.replace(/\.(\w+)\.(\w+)$/, '.$2');
+  const { error } = await supabaseAdmin.storage.from(RECEIPT_BUCKET).upload(path, buffer, { contentType, upsert: false });
+  if (error) {
+    res.status(500).json({ error: `Could not store the receipt: ${error.message}` });
+    return;
+  }
+  res.status(201).json({ path });
+});
+
+app.get('/api/receipts/url', requireTenantAuth, async (req: TenantRequest, res) => {
+  const path = String(req.query.path || '');
+  const tenantId = resolveTargetTenantId(req);
+  if (!supabaseAdmin || !path || (req.userRole !== 'PLATFORM_ADMIN' && !path.startsWith(`${tenantId}/`))) {
+    res.status(404).json({ error: 'Receipt not found' });
+    return;
+  }
+  const { data, error } = await supabaseAdmin.storage.from(RECEIPT_BUCKET).createSignedUrl(path, 60 * 60);
+  if (error || !data) {
+    res.status(404).json({ error: 'Receipt not found' });
+    return;
+  }
+  res.json({ url: data.signedUrl });
 });
 
 // JSON error responses for anything a route throws (see the async wrapper at the top).

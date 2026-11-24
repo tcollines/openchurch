@@ -74,6 +74,8 @@ import { DueBanner } from '@/modules/billing/BillingParts';
 import { SubscriptionService } from '@/services/churchService';
 import { INSPECT_KEY_BY_CODE } from './insights';
 import { SoulsSummaryCard } from '@/modules/tele-pastoring/SoulsWon';
+import { RejectSheet } from './RejectSheet';
+import { BudgetCard } from './BudgetCard';
 import { churchContributions, churchRequests, ChurchProfilePage, ContributionsPage, InspectDepartmentPage, RequestsPage, teamAttendance, TeamAttendancePage } from './AdminTools';
 
 /* ── shared bits ─────────────────────────────────────────────── */
@@ -305,6 +307,7 @@ const AdminOverviewTab: React.FC = () => {
         <div className="lg:col-span-2 flex flex-col gap-4">
           {approvalsCard}
           {moneyCard}
+          <BudgetCard tenantId={activeTenantId} />
           <SoulsSummaryCard tenantId={activeTenantId} />
         </div>
         <div className="lg:hidden">{deptGrid}</div>
@@ -324,6 +327,7 @@ const AdminApprovalsView: React.FC = () => {
   const requisitions = DepartmentService.getRequisitions(activeTenantId);
   const workplans = DepartmentService.getWorkplans(activeTenantId);
   const [tab, setTab] = useState<'reqs' | 'wps' | 'done'>('reqs');
+  const [rejecting, setRejecting] = useState<{ title: string; sub: string; dept: string; run: (comment: string) => void } | null>(null);
 
   const pendingReqs = requisitions.filter((r) => r.status === RequisitionStatus.PENDING_ADMIN);
   const pendingWps = workplans.filter((w) => w.status === WorkflowStatus.SUBMITTED);
@@ -397,7 +401,14 @@ const AdminApprovalsView: React.FC = () => {
         <div className="grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            onClick={() => DepartmentService.reviewRequisition(r.id, RequisitionStatus.REJECTED, 'Please revise quantities and resubmit.')}
+            onClick={() =>
+              setRejecting({
+                title: r.title,
+                sub: `${deptName(r.departmentId)} · ${r.requisitionNumber} · ${currency} ${num(requisitionAsk(r))}`,
+                dept: deptName(r.departmentId),
+                run: (c) => DepartmentService.reviewRequisition(r.id, RequisitionStatus.REJECTED, c),
+              })
+            }
             className="oc-btn !h-12 bg-church-canvas text-church-text"
           >
             Reject
@@ -423,7 +434,10 @@ const AdminApprovalsView: React.FC = () => {
           </div>
           {statusBadge(w.status)}
         </div>
-        <div>{w.items.map((it, i) => line(`${it.quantity}× ${it.itemName}`, `${currency} ${num(it.totalCost)}`, i))}</div>
+        <div>{w.items.map((it, i) => line(`${it.activity ? `${it.activity} · ` : ''}${it.quantity}× ${it.itemName}`, `${currency} ${num(it.totalCost)}`, i))}</div>
+        {w.status === WorkflowStatus.REJECTED && w.reviewNotes && (
+          <p className="m-0 px-3 py-2.5 rounded-xl bg-church-negSoft text-sm text-[#8F1D14]">{w.reviewNotes}</p>
+        )}
         {w.deptContributionAmount > 0 && (
           <div className="flex justify-between text-sm">
             <span className="text-church-muted">Team contribution</span>
@@ -440,7 +454,14 @@ const AdminApprovalsView: React.FC = () => {
           <div className="grid grid-cols-2 gap-2.5">
             <button
               type="button"
-              onClick={() => DepartmentService.reviewWorkplan(w.id, WorkflowStatus.REJECTED, 0, 'Please revise and resubmit.')}
+              onClick={() =>
+                setRejecting({
+                  title: w.title || `${w.monthLabel} workplan`,
+                  sub: `${deptName(w.departmentId)} · ${w.monthLabel} · ${currency} ${num(net)}`,
+                  dept: deptName(w.departmentId),
+                  run: (c) => DepartmentService.reviewWorkplan(w.id, WorkflowStatus.REJECTED, 0, c),
+                })
+              }
               className="oc-btn !h-12 bg-church-canvas text-church-text"
             >
               Reject
@@ -474,7 +495,7 @@ const AdminApprovalsView: React.FC = () => {
           </button>
         }
         title="Approvals"
-        subtitle="Department requests waiting on Administration."
+        subtitle="Check every item, then approve or send it back with a comment."
       />
       <Chips
         items={[
@@ -490,6 +511,14 @@ const AdminApprovalsView: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4 items-start">{list}</div>
       )}
+      <RejectSheet
+        target={rejecting}
+        onClose={() => setRejecting(null)}
+        onReject={(c) => {
+          rejecting?.run(c);
+          setRejecting(null);
+        }}
+      />
     </>
   );
 };

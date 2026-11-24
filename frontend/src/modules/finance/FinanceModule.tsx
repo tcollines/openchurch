@@ -1,3 +1,4 @@
+import { FinanceApprovalsView } from './FinanceApprovals';
 import React, { useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import {
@@ -1002,6 +1003,7 @@ export const FinanceModule: React.FC = () => {
     <Routes>
       <Route path="collections" element={<ServiceCollectionsView />} />
       <Route path="partners" element={<PartnerRegisterView />} />
+      <Route path="approvals" element={<FinanceApprovalsView />} />
       <Route path="outflows" element={<OutflowsAndRemittancesView />} />
       <Route
         path="more"

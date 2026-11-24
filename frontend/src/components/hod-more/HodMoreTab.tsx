@@ -5,15 +5,18 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   Coins,
   FileText,
   GraduationCap,
   HeartHandshake,
   Home,
+  Lock,
   LogOut,
   Megaphone,
   MessageCircle,
+  Pencil,
   Phone,
   PhoneCall,
   Plus,
@@ -55,8 +58,11 @@ import {
   AttendanceAndMemberService,
   DepartmentService,
   FinanceService,
+  AccountabilityService,
   requisitionAsk,
 } from '@/services/churchService';
+import { Requisition } from '@/shared/types';
+import { AccountabilitySection, AccountabilitySheet, BlockedSheet } from './RequisitionFlow';
 import { DepartmentCode, FinanceType, UserRole } from '@/shared/enums';
 import {
   formatCurrency,
@@ -74,7 +80,7 @@ import {
   TextInput,
 } from '@/components/ui/FormControls';
 
-type MoreSection = 'requisitions' | 'workplans' | 'contributions' | 'members';
+type MoreSection = 'requisitions' | 'workplans' | 'contributions' | 'members' | 'accountability';
 
 const DEPT_SHORT: Record<string, string> = {
   [DepartmentCode.ADMIN]: 'Administration',
@@ -165,6 +171,31 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
     { description: '', quantity: 1, unitCost: 0 },
   ]);
   const [reqContribution, setReqContribution] = useState(0);
+  const [editingReqId, setEditingReqId] = useState<string | null>(null);
+  const [blockedBy, setBlockedBy] = useState<Requisition | null>(null);
+  const [accountFor, setAccountFor] = useState<Requisition | null>(null);
+  const dueAccountability = deptId ? AccountabilityService.dueFor(activeTenantId, deptId) : [];
+  const openNewRequisition = () => {
+    if (dueAccountability.length) {
+      setBlockedBy(dueAccountability[0]);
+      return;
+    }
+    setEditingReqId(null);
+    setReqTitle('');
+    setReqItems([{ description: '', quantity: 1, unitCost: 0 }]);
+    setReqContribution(0);
+    setReqSheetOpen(true);
+  };
+  const openEditRequisition = (r: Requisition) => {
+    setEditingReqId(r.id);
+    setReqTitle(r.title);
+    setReqWorkplanId(r.workplanId || '');
+    setReqServiceId(r.serviceId || '');
+    setReqItems(r.items.map((i) => ({ ...i })));
+    setReqContribution(Number(r.deptContributionAmount || 0));
+    setReqSheetOpen(true);
+  };
+  const editingReq = editingReqId ? requisitions.find((r) => r.id === editingReqId) ?? null : null;
   const reqTotal = reqItems.reduce((s, i) => s + i.quantity * i.unitCost, 0);
   const reqGive = Math.min(reqTotal, Math.max(0, reqContribution || 0));
   const monthKey = new Date().toISOString().slice(0, 7);
@@ -201,6 +232,26 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
     );
     if (!reqTitle.trim() || validItems.length === 0 || !deptId) return;
 
+    if (editingReqId) {
+      DepartmentService.resubmitRequisition(editingReqId, {
+        title: reqTitle,
+        items: validItems,
+        workplanId: reqWorkplanId || null,
+        serviceId: reqServiceId || null,
+        deptContributionAmount: reqGive,
+      });
+      setEditingReqId(null);
+      setReqTitle('');
+      setReqItems([{ description: '', quantity: 1, unitCost: 0 }]);
+      setReqContribution(0);
+      setReqSheetOpen(false);
+      return;
+    }
+    if (AccountabilityService.dueFor(activeTenantId, deptId).length) {
+      setReqSheetOpen(false);
+      setBlockedBy(AccountabilityService.dueFor(activeTenantId, deptId)[0]);
+      return;
+    }
     DepartmentService.createRequisition({
       tenantId: activeTenantId,
       departmentId: deptId,
@@ -305,7 +356,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
             <span className="oc-sub">Administration approves, then Finance pays you out.</span>
           </span>
           <span className="flex flex-col sm:flex-row gap-2.5 w-full sm:w-auto">
-            <button type="button" onClick={() => setReqSheetOpen(true)} className="oc-btn-primary w-full sm:w-auto">
+            <button type="button" onClick={openNewRequisition} className="oc-btn-primary w-full sm:w-auto">
               <Plus className="w-[18px] h-[18px]" /> Submit a requisition
             </button>
             <button
@@ -359,6 +410,22 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
             )}
           </DarkCard>
           )}
+          <button
+            type="button"
+            onClick={() => {
+              setSection('accountability');
+              setTimeout(() => document.getElementById('more-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+            }}
+            className={`oc-press flex items-center gap-3 px-4 py-3.5 rounded-[20px] bg-white text-left ${section === 'accountability' ? 'ring-2 ring-church-lime' : ''}`}
+          >
+            <Tile icon={ClipboardCheck} tone="amber" />
+            <span className="flex-1 min-w-0 flex flex-col">
+              <span className="text-[15px] font-semibold">Accountability</span>
+              <span className="oc-sub truncate">Show what you bought with each payout</span>
+            </span>
+            {dueAccountability.length > 0 ? <Badge kind="warn">{dueAccountability.length} due</Badge> : <Badge kind="ok">Up to date</Badge>}
+            <ChevronRight className="w-[18px] h-[18px] text-church-faint shrink-0" />
+          </button>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-3">
             {tiles.map((t) => (
               <button
@@ -435,16 +502,28 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
 
       {section && (
         <div id="more-section" className="flex items-center justify-between gap-3 pt-2 scroll-mt-24">
-          <h2 className="oc-h2 !text-xl">{tiles.find((t) => t.id === section)?.label}</h2>
+          <h2 className="oc-h2 !text-xl">{section === 'accountability' ? 'Accountability' : tiles.find((t) => t.id === section)?.label}</h2>
           <button type="button" onClick={() => setSection(null)} className="text-sm font-semibold text-church-muted">
             Close
           </button>
         </div>
       )}
 
+      {section === 'accountability' && deptId && (
+        <AccountabilitySection tenantId={activeTenantId} departmentId={deptId} currency={currency} requisitions={requisitions} onAccount={setAccountFor} />
+      )}
+
       {/* 1. REQUISITIONS SUB-VIEW */}
       {section === 'requisitions' && (
         <div className="space-y-4">
+          {dueAccountability.length > 0 && (
+            <div className="flex items-start gap-3 px-3.5 py-3 rounded-2xl bg-church-warnSoft">
+              <Lock className="w-5 h-5 text-[#A15C00] shrink-0 mt-px" />
+              <span className="flex-1 text-sm leading-[1.45] text-[#5A3500]">
+                Account for <b>{dueAccountability[0].requisitionNumber}</b> ({formatCurrency(dueAccountability[0].amountPaid, currency)}) before you can send a new requisition.
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2">
             <div>
               <h3 className="text-base font-semibold text-church-text">
@@ -456,7 +535,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
             </div>
             <button
               type="button"
-              onClick={() => setReqSheetOpen(true)}
+              onClick={openNewRequisition}
               className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-church-lime text-church-forest text-sm font-bold hover:bg-church-limeHover oc-press whitespace-nowrap"
             >
               <Plus className="w-4 h-4" /> Submit Requisition
@@ -511,10 +590,24 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
                       Asked: {formatCurrency(requisitionAsk(req), currency)}
                     </span>
                   </div>
-                  {req.rejectionReason && (
-                    <p className="text-xs text-church-neg bg-church-negSoft px-3 py-2 rounded-2xl font-medium">
-                      Admin Note: {req.rejectionReason}
-                    </p>
+                  {req.status === 'REJECTED' && (
+                    <>
+                      <div className="flex gap-2.5 p-3 rounded-[14px] bg-church-negSoft">
+                        <MessageCircle className="w-[18px] h-[18px] text-[#8F1D14] shrink-0" />
+                        <span className="flex flex-col gap-0.5">
+                          <span className="text-[13px] font-bold text-[#8F1D14]">Administration</span>
+                          <span className="text-sm leading-[1.45] text-[#5C1A14]">{req.rejectionReason || 'Sent back without a comment.'}</span>
+                        </span>
+                      </div>
+                      <button type="button" onClick={() => openEditRequisition(req)} className="oc-btn-dark w-full">
+                        <Pencil className="w-[18px] h-[18px]" /> Edit &amp; resubmit
+                      </button>
+                    </>
+                  )}
+                  {req.status === 'PAID' && dueAccountability.some((d) => d.id === req.id) && (
+                    <button type="button" onClick={() => setAccountFor(req)} className="oc-btn-primary w-full">
+                      <ClipboardCheck className="w-[18px] h-[18px]" /> Submit accountability
+                    </button>
                   )}
                 </div>
               ))}
@@ -822,14 +915,33 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
         </div>
       )}
 
+      <BlockedSheet
+        requisition={blockedBy}
+        currency={currency}
+        onClose={() => setBlockedBy(null)}
+        onAccount={(r) => {
+          setBlockedBy(null);
+          setAccountFor(r);
+        }}
+      />
+      <AccountabilitySheet requisition={accountFor} tenantId={activeTenantId} userId={user.id} currency={currency} onClose={() => setAccountFor(null)} />
+
       {/* Modal 1: Submit Requisition */}
       <MobileSheet
         open={reqSheetOpen}
         onClose={() => setReqSheetOpen(false)}
-        title="Submit Department Requisition"
-        subtitle="Sent directly to Administration for approval"
+        title={editingReq ? 'Edit & resubmit' : 'Submit Department Requisition'}
+        subtitle={editingReq ? `${editingReq.requisitionNumber} · fix what Administration asked, then send it back` : 'Sent directly to Administration for approval'}
       >
         <form onSubmit={handleCreateRequisition} className="space-y-4">
+          {editingReq?.rejectionReason && (
+            <div className="flex gap-2.5 p-3 rounded-[14px] bg-church-negSoft">
+              <MessageCircle className="w-[18px] h-[18px] text-[#8F1D14] shrink-0" />
+              <span className="text-sm leading-[1.45] text-[#5C1A14]">
+                <b className="text-[#8F1D14]">Administration:</b> {editingReq.rejectionReason}
+              </span>
+            </div>
+          )}
           <TextInput
             label="Requisition Title"
             value={reqTitle}
@@ -950,7 +1062,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
             type="submit"
             className="oc-btn-primary w-full"
           >
-            Send to Administration
+            {editingReq ? 'Resubmit to Administration' : 'Send to Administration'}
           </button>
         </form>
       </MobileSheet>
