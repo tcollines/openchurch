@@ -54,7 +54,7 @@ import {
   OpenChurchDatabase,
 } from './seedData';
 import { apiClient, getStoredToken } from './apiClient';
-import { enqueueSync, flushSync, getPendingOps } from './syncQueue';
+import { enqueueSync, flushSync, getPendingOps, retryFailedSync } from './syncQueue';
 
 export interface PastorVerificationInfo {
   sent: boolean;
@@ -191,6 +191,7 @@ const listOf = (db: OpenChurchDatabase, k: SyncedKey) => ((db[k] as unknown as W
 
 /** While > 0, saves come from the server and must not be sent back to it. */
 let applyingServerData = 0;
+let retriedFailedThisSession = false;
 
 const snapshotSynced = () => {
   const snap = {} as Record<SyncedKey, Map<string, string>>;
@@ -564,6 +565,11 @@ export const PlatformService = {
       } finally {
         applyingServerData--;
       }
+      // Changes the server refused earlier (e.g. a Bacenta whose leader login wasn't there yet) get another go.
+      if (!retriedFailedThisSession) {
+        retriedFailedThisSession = true;
+        retryFailedSync();
+      }
     } catch {
       // Ignore if token expired or offline
     }
@@ -594,9 +600,10 @@ export const PlatformService = {
     role: UserRole;
     departmentId: string | null;
     fellowshipUnitId?: string | null;
+    id?: string;
   }): User {
     const newUser: User = {
-      id: uid('u'),
+      id: input.id ?? uid('u'),
       tenantId: input.tenantId,
       fullName: input.fullName.trim(),
       email: input.email.trim().toLowerCase(),
@@ -613,7 +620,7 @@ export const PlatformService = {
 
     // Persist to Supabase PostgreSQL & automatically email their department invite link
     void apiClient
-      .post<{ user: User }>('/users', input, { tenantId: input.tenantId })
+      .post<{ user: User }>('/users', { ...input, id: newUser.id }, { tenantId: input.tenantId })
       .then((res) => {
         if (res?.user) {
           saveDb((draft) => {
@@ -1443,6 +1450,27 @@ export const FellowshipService = {
       .sort((a, b) => a.name.localeCompare(b.name));
   },
 
+  /** The unit a leader leads. Leaders only ever see their own; a head previewing sees the first one. */
+  getMyUnit(tenantId: string, unitType: FellowshipUnitType, user: Pick<User, 'id' | 'role' | 'fellowshipUnitId'> | null): FellowshipUnit | null {
+    const units = FellowshipService.getUnits(tenantId, unitType);
+    if (!user) return null;
+    const led = units.find((u) => u.leaderUserId === user.id);
+    if (led) return led;
+    const me = dbCache.users.find((u) => u.id === user.id);
+    const linkedId = me?.fellowshipUnitId ?? user.fellowshipUnitId;
+    const linked = units.find((u) => u.id === linkedId && (!u.leaderUserId || u.leaderUserId === user.id));
+    if (linked) return linked;
+    const isLeader = user.role === UserRole.BACENTA_LEADER || user.role === UserRole.CAMPUS_LEADER;
+    return isLeader ? null : units[0] ?? null;
+  },
+
+  /** Leader logins in this church that don't lead a unit yet (e.g. given a login from the Team tab). */
+  getUnassignedLeaders(tenantId: string, unitType: FellowshipUnitType): User[] {
+    const role = unitType === FellowshipUnitType.BACENTA ? UserRole.BACENTA_LEADER : UserRole.CAMPUS_LEADER;
+    const leading = new Set(dbCache.fellowshipUnits.map((u) => u.leaderUserId).filter(Boolean));
+    return dbCache.users.filter((u) => u.tenantId === tenantId && u.role === role && u.isActive !== false && !leading.has(u.id));
+  },
+
   getUnitById(unitId: string | null): FellowshipUnit | null {
     if (!unitId) return null;
     return dbCache.fellowshipUnits.find((u) => u.id === unitId) ?? null;
@@ -1457,29 +1485,33 @@ export const FellowshipService = {
     leaderName: string;
     leaderPhone: string;
     leaderEmail?: string;
+    /** An existing leader login to appoint (instead of creating one). */
+    leaderUserId?: string | null;
     assignedMemberIds?: string[];
   }): FellowshipUnit {
     const unitId = uid(input.unitType === FellowshipUnitType.BACENTA ? 'bac' : 'camp');
     const now = new Date().toISOString();
-    let leaderUserId: string | null = null;
-
+    const leaderRole = input.unitType === FellowshipUnitType.BACENTA ? UserRole.BACENTA_LEADER : UserRole.CAMPUS_LEADER;
     const dept = DepartmentService.getDepartmentByCode(
       input.tenantId,
-      input.unitType === FellowshipUnitType.BACENTA
-        ? DepartmentCode.BACENTA
-        : DepartmentCode.CAMPUSES
+      input.unitType === FellowshipUnitType.BACENTA ? DepartmentCode.BACENTA : DepartmentCode.CAMPUSES
     );
 
-    if (input.leaderEmail?.trim()) {
-      const existingUser = dbCache.users.find(
-        (u) => u.email.toLowerCase() === input.leaderEmail!.trim().toLowerCase()
-      );
-      if (existingUser) {
-        leaderUserId = existingUser.id;
-      } else {
-        leaderUserId = uid('u');
+    // Who leads it: an existing login, a login matched by email, or a new login made on the server.
+    const email = input.leaderEmail?.trim().toLowerCase() || '';
+    let existingLeader = input.leaderUserId ? dbCache.users.find((u) => u.id === input.leaderUserId) ?? null : null;
+    if (!existingLeader && email) {
+      const byEmail = dbCache.users.find((u) => u.email.toLowerCase() === email) ?? null;
+      if (byEmail && byEmail.tenantId !== input.tenantId) throw new Error(`${email} already has a login at another church.`);
+      if (byEmail && byEmail.role !== leaderRole) {
+        throw new Error(`${email} already signs in as ${byEmail.role.replace(/_/g, ' ').toLowerCase()}. Use a different email for the leader.`);
       }
+      existingLeader = byEmail;
     }
+    if (existingLeader && dbCache.fellowshipUnits.some((u) => u.leaderUserId === existingLeader!.id)) {
+      throw new Error(`${existingLeader.fullName} already leads another ${input.unitType === FellowshipUnitType.BACENTA ? 'Bacenta' : 'Campus'}.`);
+    }
+    const leaderUserId = existingLeader?.id ?? (email ? uid('u') : null);
 
     const unit: FellowshipUnit = {
       id: unitId,
@@ -1489,36 +1521,17 @@ export const FellowshipService = {
       locationOrInstitution: input.locationOrInstitution.trim(),
       meetingDay: input.meetingDay.trim() || 'Wednesday 6:00 PM',
       leaderUserId,
-      leaderName: input.leaderName.trim(),
-      leaderPhone: formatPhoneNumber(input.leaderPhone),
+      leaderName: (existingLeader?.fullName ?? input.leaderName).trim(),
+      leaderPhone: formatPhoneNumber(existingLeader?.phoneNumber || input.leaderPhone),
       createdAt: now,
     };
 
     saveDb((draft) => {
       draft.fellowshipUnits.push(unit);
-      if (input.leaderEmail?.trim() && leaderUserId) {
-        const existing = draft.users.find((u) => u.id === leaderUserId);
-        if (existing) {
-          existing.fellowshipUnitId = unitId;
-        } else {
-          draft.users.push({
-            id: leaderUserId,
-            tenantId: input.tenantId,
-            fullName: input.leaderName.trim(),
-            email: input.leaderEmail.trim().toLowerCase(),
-            phoneNumber: formatPhoneNumber(input.leaderPhone),
-            role:
-              input.unitType === FellowshipUnitType.BACENTA
-                ? UserRole.BACENTA_LEADER
-                : UserRole.CAMPUS_LEADER,
-            departmentId: dept?.id ?? null,
-            fellowshipUnitId: unitId,
-            isActive: true,
-            createdAt: now,
-          });
-        }
+      if (existingLeader) {
+        const u = draft.users.find((x) => x.id === existingLeader!.id);
+        if (u) u.fellowshipUnitId = unitId;
       }
-
       if (input.assignedMemberIds?.length) {
         draft.members.forEach((m) => {
           if (input.assignedMemberIds!.includes(m.id)) {
@@ -1531,6 +1544,20 @@ export const FellowshipService = {
         });
       }
     });
+
+    // New leader: make the real login on the server (same id), which also emails their invite.
+    if (!existingLeader && leaderUserId && email) {
+      PlatformService.createUser({
+        id: leaderUserId,
+        tenantId: input.tenantId,
+        fullName: input.leaderName,
+        email,
+        phoneNumber: input.leaderPhone,
+        role: leaderRole,
+        departmentId: dept?.id ?? null,
+        fellowshipUnitId: unitId,
+      });
+    }
 
     return unit;
   },

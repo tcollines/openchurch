@@ -99,7 +99,11 @@ const HodUnitsAndReportsView: React.FC<FellowshipProps> = ({ unitType }) => {
   const [leaderName, setLeaderName] = useState('');
   const [leaderPhone, setLeaderPhone] = useState('');
   const [leaderEmail, setLeaderEmail] = useState('');
+  const [leaderLogin, setLeaderLogin] = useState('');
+  const [unitError, setUnitError] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const freeLeaders = FellowshipService.getUnassignedLeaders(activeTenantId, unitType);
+  const pickedLeader = freeLeaders.find((u) => u.id === leaderLogin) ?? null;
 
   const totalSoulsWon =
     meetings.reduce((s, m) => s + m.soulsWonCount, 0) +
@@ -107,18 +111,26 @@ const HodUnitsAndReportsView: React.FC<FellowshipProps> = ({ unitType }) => {
 
   const handleCreateUnit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !leaderName.trim()) return;
-    FellowshipService.createUnit({
-      tenantId: activeTenantId,
-      unitType,
-      name,
-      locationOrInstitution: location,
-      meetingDay,
-      leaderName,
-      leaderPhone,
-      leaderEmail,
-      assignedMemberIds: selectedMembers,
-    });
+    if (!name.trim() || !(pickedLeader || leaderName.trim())) return;
+    try {
+      FellowshipService.createUnit({
+        tenantId: activeTenantId,
+        unitType,
+        name,
+        locationOrInstitution: location,
+        meetingDay,
+        leaderName: pickedLeader?.fullName ?? leaderName,
+        leaderPhone: pickedLeader?.phoneNumber ?? leaderPhone,
+        leaderEmail: pickedLeader ? '' : leaderEmail,
+        leaderUserId: pickedLeader?.id ?? null,
+        assignedMemberIds: selectedMembers,
+      });
+    } catch (err) {
+      setUnitError(err instanceof Error ? err.message : `Could not create the ${labelSingular}`);
+      return;
+    }
+    setUnitError('');
+    setLeaderLogin('');
     setName('');
     setLocation('');
     setLeaderName('');
@@ -270,27 +282,45 @@ const HodUnitsAndReportsView: React.FC<FellowshipProps> = ({ unitType }) => {
             onChange={setMeetingDay}
             required
           />
-          <div className="grid grid-cols-2 gap-3">
-            <TextInput
-              label="Leader Full Name"
-              value={leaderName}
-              onChange={setLeaderName}
-              required
-            />
-            <PhoneInput
-              label="Leader Phone"
-              value={leaderPhone}
-              onChange={setLeaderPhone}
-              required
-            />
-          </div>
-          <TextInput
-            label="Leader Login Email (Optional — auto-creates leader dashboard account)"
-            type="email"
-            value={leaderEmail}
-            onChange={setLeaderEmail}
-            placeholder="leader@openchurch.org"
-          />
+          {freeLeaders.length > 0 && (
+            <label className="flex flex-col gap-1.5">
+              <span className="oc-label">Leader</span>
+              <select value={leaderLogin} onChange={(e) => setLeaderLogin(e.target.value)} className="oc-field">
+                <option value="">Someone new (enter their details below)</option>
+                {freeLeaders.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.fullName} · {u.email}
+                  </option>
+                ))}
+              </select>
+              <span className="oc-sub">These {labelSingular} leaders already have a login but no {labelSingular} yet.</span>
+            </label>
+          )}
+          {!pickedLeader && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <TextInput
+                  label="Leader Full Name"
+                  value={leaderName}
+                  onChange={setLeaderName}
+                  required
+                />
+                <PhoneInput
+                  label="Leader Phone"
+                  value={leaderPhone}
+                  onChange={setLeaderPhone}
+                  required
+                />
+              </div>
+              <TextInput
+                label="Leader Login Email (Optional — creates their leader login and emails an invite)"
+                type="email"
+                value={leaderEmail}
+                onChange={setLeaderEmail}
+                placeholder="leader@gmail.com"
+              />
+            </>
+          )}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-church-muted">
               Assign Members (Optional)
@@ -318,6 +348,11 @@ const HodUnitsAndReportsView: React.FC<FellowshipProps> = ({ unitType }) => {
               ))}
             </div>
           </div>
+          {unitError && (
+            <p role="alert" className="m-0 px-3.5 py-2.5 rounded-xl bg-church-negSoft text-sm text-[#8F1D14]">
+              {unitError}
+            </p>
+          )}
           <button
             type="submit"
             className="oc-btn-primary w-full"
@@ -502,8 +537,7 @@ const LeaderMeetingCheckInView: React.FC<FellowshipProps> = ({ unitType }) => {
   const labelSingular = isBacenta ? 'Bacenta' : 'Campus';
 
   const units = FellowshipService.getUnits(activeTenantId, unitType);
-  const myUnit =
-    units.find((u) => u.id === user?.fellowshipUnitId) || units[0] || null;
+  const myUnit = FellowshipService.getMyUnit(activeTenantId, unitType, user);
 
   const unitMembers = myUnit
     ? FellowshipService.getUnitMembers(activeTenantId, myUnit.id, unitType)
@@ -530,7 +564,8 @@ const LeaderMeetingCheckInView: React.FC<FellowshipProps> = ({ unitType }) => {
   if (!myUnit) {
     return (
       <div className="p-6 bg-white rounded-card text-sm text-church-muted">
-        No {labelSingular} assigned yet. Ask the Head of {labelSingular}s to create one.
+        You haven’t been made leader of a {labelSingular} yet. Ask the Head of {labelSingular}s to appoint you when they
+        create or edit a {labelSingular}.
       </div>
     );
   }
@@ -723,8 +758,7 @@ const LeaderOutreachView: React.FC<FellowshipProps> = ({ unitType }) => {
   useChurchStoreRefresh();
   const { user, activeTenantId } = useAuth();
   const units = FellowshipService.getUnits(activeTenantId, unitType);
-  const myUnit =
-    units.find((u) => u.id === user?.fellowshipUnitId) || units[0] || null;
+  const myUnit = FellowshipService.getMyUnit(activeTenantId, unitType, user);
   const outreaches = myUnit
     ? FellowshipService.getOutreaches(activeTenantId, [myUnit.id])
     : [];
@@ -739,7 +773,13 @@ const LeaderOutreachView: React.FC<FellowshipProps> = ({ unitType }) => {
   const [soulPhone, setSoulPhone] = useState('');
   const [testimony, setTestimony] = useState('');
 
-  if (!myUnit) return null;
+  if (!myUnit) {
+    return (
+      <div className="p-6 bg-white rounded-card text-sm text-church-muted">
+        You haven’t been made leader of a {unitType === FellowshipUnitType.BACENTA ? 'Bacenta' : 'Campus'} yet.
+      </div>
+    );
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -827,8 +867,7 @@ const LeaderMeetingFinanceView: React.FC<FellowshipProps> = ({ unitType }) => {
   const currency = tenant?.currency || 'UGX';
 
   const units = FellowshipService.getUnits(activeTenantId, unitType);
-  const myUnit =
-    units.find((u) => u.id === user?.fellowshipUnitId) || units[0] || null;
+  const myUnit = FellowshipService.getMyUnit(activeTenantId, unitType, user);
 
   const [category, setCategory] = useState<
     FinanceCategory.OFFERTORY | FinanceCategory.TITHE
@@ -840,7 +879,13 @@ const LeaderMeetingFinanceView: React.FC<FellowshipProps> = ({ unitType }) => {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [refCode, setRefCode] = useState('');
 
-  if (!myUnit) return null;
+  if (!myUnit) {
+    return (
+      <div className="p-6 bg-white rounded-card text-sm text-church-muted">
+        You haven’t been made leader of a {unitType === FellowshipUnitType.BACENTA ? 'Bacenta' : 'Campus'} yet.
+      </div>
+    );
+  }
 
   const unitTxs = FinanceService.getTransactions(activeTenantId).filter(
     (t) => t.fellowshipUnitId === myUnit.id

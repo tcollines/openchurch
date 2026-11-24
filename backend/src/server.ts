@@ -1727,7 +1727,8 @@ app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
     return;
   }
   try {
-    const { fullName, email, phoneNumber, role, departmentId, fellowshipUnitId } = req.body as {
+    const { id: clientId, fullName, email, phoneNumber, role, departmentId, fellowshipUnitId } = req.body as {
+      id?: string;
       fullName: string;
       email: string;
       phoneNumber?: string;
@@ -1749,13 +1750,21 @@ app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
     }
 
     const passwordHash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
-    const [tenant, dept] = await Promise.all([
+    const [tenant, dept, unit] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: tenantId } }),
-      departmentId ? prisma.department.findUnique({ where: { id: departmentId } }) : Promise.resolve(null),
+      departmentId ? prisma.department.findFirst({ where: { id: departmentId, tenantId } }) : Promise.resolve(null),
+      // The unit may still be on its way from the phone; the sync links it when it arrives.
+      asClientUuid(fellowshipUnitId) ? prisma.fellowshipUnit.findFirst({ where: { id: String(fellowshipUnitId), tenantId } }) : Promise.resolve(null),
     ]);
+    const newId = asClientUuid(clientId);
+    if (newId && (await prisma.user.findUnique({ where: { id: newId }, select: { id: true } }))) {
+      res.status(409).json({ error: 'That login already exists' });
+      return;
+    }
 
     const user = await prisma.user.create({
       data: {
+        ...(newId ? { id: newId } : {}),
         tenantId,
         fullName: fullName.trim(),
         email: normalizedEmail,
@@ -1763,9 +1772,12 @@ app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
         phoneNumber: phoneNumber || '',
         role: role || 'AIRPORT_MEMBER',
         departmentId: dept?.id ?? null,
-        fellowshipUnitId: fellowshipUnitId || null,
+        fellowshipUnitId: unit?.id ?? null,
       },
     });
+    if (unit && (user.role === 'BACENTA_LEADER' || user.role === 'CAMPUS_LEADER')) {
+      await prisma.fellowshipUnit.update({ where: { id: unit.id }, data: { leaderUserId: user.id } });
+    }
 
     const reqOrigin = resolveFrontendOrigin(req);
 
@@ -3009,6 +3021,14 @@ async function applySyncOp(db: TxClient, tenantId: string, op: SyncOp): Promise<
   }
   const data = toColumns(model, rec);
   delete data.id;
+  // A Bacenta/Campus can arrive before its leader's login exists on the server (the login is created
+  // separately). Save the unit without the link for now; the login request links it when it lands.
+  let leaderId: string | null = null;
+  if (model === 'FellowshipUnit' && typeof data.leaderUserId === 'string' && data.leaderUserId) {
+    const leader = await db.user.findFirst({ where: { id: data.leaderUserId, tenantId }, select: { id: true } });
+    if (leader) leaderId = leader.id;
+    else data.leaderUserId = null;
+  }
   try {
     await delegate.upsert({ where: { id: op.id }, create: { ...data, id: op.id, tenantId }, update: data });
   } catch (err) {
@@ -3023,6 +3043,10 @@ async function applySyncOp(db: TxClient, tenantId: string, op: SyncOp): Promise<
     const twin = await delegate.findFirst({ where });
     if (!twin) throw err;
     await delegate.update({ where: { id: twin.id }, data });
+  }
+  if (model === 'FellowshipUnit' && leaderId) {
+    // The leader's dashboard opens on the unit they lead.
+    await db.user.update({ where: { id: leaderId }, data: { fellowshipUnitId: op.id } });
   }
   if (model === 'Workplan' && Array.isArray(rec.items)) {
     await db.workplanItem.deleteMany({ where: { workplanId: op.id } });
