@@ -1,4 +1,4 @@
-import { readStore } from '@/services/churchService';
+import { readStore, requisitionAsk } from '@/services/churchService';
 import { DepartmentCode, FellowshipUnitType, FinanceType, RequisitionStatus, ReachoutMode } from '@/shared/enums';
 
 /* Summaries the church Administrator sees when inspecting a department. All from local records. */
@@ -90,7 +90,7 @@ export const inspectDepartment = (tenantId: string, code: DepartmentCode): Inspe
     kind: 'request',
     title: `${r.requisitionNumber} · ${r.title}`,
     sub: r.status === RequisitionStatus.PENDING_ADMIN ? 'Pending approval' : r.status === RequisitionStatus.PAID ? `Paid · ${short(r.requestedAt)}` : `${r.status.charAt(0)}${r.status.slice(1).toLowerCase()} · ${short(r.requestedAt)}`,
-    amount: Number(r.totalAmount),
+    amount: requisitionAsk(r),
     at: r.requestedAt,
   }));
 

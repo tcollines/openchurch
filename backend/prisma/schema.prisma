@@ -462,6 +462,7 @@ model Requisition {
   title             String
   itemsJson         Json              @default("[]") @map("items_json")
   totalAmount       Float             @map("total_amount")
+  deptContributionAmount Float        @default(0) @map("dept_contribution_amount")
   amountPaid        Float             @default(0) @map("amount_paid")
   status            RequisitionStatus @default(PENDING_ADMIN)
   rejectionReason   String            @default("") @map("rejection_reason")

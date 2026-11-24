@@ -55,6 +55,7 @@ import {
   AttendanceAndMemberService,
   DepartmentService,
   FinanceService,
+  requisitionAsk,
 } from '@/services/churchService';
 import { DepartmentCode, FinanceType, UserRole } from '@/shared/enums';
 import {
@@ -163,6 +164,15 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
   const [reqItems, setReqItems] = useState([
     { description: '', quantity: 1, unitCost: 0 },
   ]);
+  const [reqContribution, setReqContribution] = useState(0);
+  const reqTotal = reqItems.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+  const reqGive = Math.min(reqTotal, Math.max(0, reqContribution || 0));
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const contributedThisMonth = contributions.filter((c) => c.contributionDate.startsWith(monthKey)).reduce((s, c) => s + c.amount, 0);
+  const deptLabel =
+    ({ FINANCE: 'Finance', BACENTA: 'Bacentas', AIRPORT_STARS: 'Airport Stars', TELE_PASTORING: 'Tele Pastoring', CHILDRENS_CHURCH: 'Children’s Church', CAMPUSES: 'Campuses', ADMIN: 'Administration' } as Record<string, string>)[departmentCode] ||
+    department?.name ||
+    'The department';
 
   // 2. Workplan / Budget Form
   const [wpMonth, setWpMonth] = useState('2026-11');
@@ -199,9 +209,11 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
       title: reqTitle,
       items: validItems,
       requestedBy: user.id,
+      deptContributionAmount: reqGive,
     });
     setReqTitle('');
     setReqItems([{ description: '', quantity: 1, unitCost: 0 }]);
+    setReqContribution(0);
     setReqSheetOpen(false);
   };
 
@@ -483,12 +495,20 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
                       </div>
                     ))}
                   </div>
+                  {Number(req.deptContributionAmount || 0) > 0 && (
+                    <div className="flex items-center justify-between pt-1 text-xs">
+                      <span className="text-church-muted">{deptLabel} gave</span>
+                      <span className="font-display font-semibold text-church-pos">
+                        {formatCurrency(Number(req.deptContributionAmount), currency)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-1 text-xs">
                     <span className="text-church-muted">
                       Paid: {formatCurrency(req.amountPaid, currency)}
                     </span>
                     <span className="font-mono font-display font-bold text-church-text">
-                      Total: {formatCurrency(req.totalAmount, currency)}
+                      Asked: {formatCurrency(requisitionAsk(req), currency)}
                     </span>
                   </div>
                   {req.rejectionReason && (
@@ -899,16 +919,38 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
             ))}
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <NumberInput
+              label={`How much is ${deptLabel} contributing?`}
+              value={reqContribution}
+              min={0}
+              prefix={currency}
+              onChange={setReqContribution}
+            />
+            <span className="flex items-center gap-2 text-[13px] text-church-muted">
+              <Coins className="w-4 h-4 text-[#2F6B0A] shrink-0" />
+              {formatCurrency(contributedThisMonth, currency)} given by the {deptLabel} team this month
+            </span>
+          </div>
+          <div className="rounded-2xl bg-[#F6F7F3] px-3.5 py-1">
+            <div className="flex justify-between py-2.5 text-[15px]">
+              <span className="text-church-muted">Total cost</span>
+              <span className="font-display font-semibold tabular-nums whitespace-nowrap">{formatCurrency(reqTotal, currency)}</span>
+            </div>
+            <div className="flex justify-between py-2.5 border-t border-church-line text-[15px]">
+              <span className="text-church-muted">{deptLabel} contributes</span>
+              <span className="font-display font-semibold tabular-nums whitespace-nowrap text-church-pos">− {formatCurrency(reqGive, currency)}</span>
+            </div>
+            <div className="flex justify-between items-baseline gap-2.5 py-3 border-t border-church-line">
+              <span className="text-[15px] font-semibold">Asking Admin for</span>
+              <span className="font-display text-[22px] font-bold tabular-nums whitespace-nowrap">{formatCurrency(reqTotal - reqGive, currency)}</span>
+            </div>
+          </div>
           <button
             type="submit"
             className="oc-btn-primary w-full"
           >
-            Submit Requisition (
-            {formatCurrency(
-              reqItems.reduce((s, i) => s + i.quantity * i.unitCost, 0),
-              currency
-            )}
-            )
+            Send to Administration
           </button>
         </form>
       </MobileSheet>

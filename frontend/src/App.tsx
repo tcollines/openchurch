@@ -8,6 +8,7 @@ import { NewChurchPage } from '@/modules/platform/NewChurchPage';
 import { AdministrationModule } from '@/modules/administration/AdministrationModule';
 import { FinanceModule } from '@/modules/finance/FinanceModule';
 import { FellowshipModule } from '@/modules/fellowship/FellowshipModule';
+import { NotificationsPage } from '@/modules/notifications/Notifications';
 import { AirportStarsModule } from '@/modules/airport-stars/AirportStarsModule';
 import { TelePastoringModule } from '@/modules/tele-pastoring/TelePastoringModule';
 import { ChildrensChurchModule } from '@/modules/childrens-church/ChildrensChurchModule';
@@ -113,6 +114,15 @@ const AppRoutes: React.FC = () => {
         element={
           <ProtectedGuard allowedRoles={[UserRole.PLATFORM_ADMIN]}>
             <CouncilWalletPage />
+          </ProtectedGuard>
+        }
+      />
+
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedGuard>
+            <NotificationsPage />
           </ProtectedGuard>
         }
       />

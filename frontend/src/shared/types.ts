@@ -225,6 +225,8 @@ export interface Requisition {
   title: string;
   items: RequisitionLineItem[];
   totalAmount: number;
+  /** What the department itself puts towards the cost, from its team's contributions. */
+  deptContributionAmount?: number;
   amountPaid: number;
   status: RequisitionStatus;
   rejectionReason: string;

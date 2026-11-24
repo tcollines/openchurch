@@ -75,6 +75,10 @@ const uid = (_prefix?: string): string => {
   });
 };
 
+/** The amount a requisition asks Administration for: total cost minus the department's own contribution. */
+export const requisitionAsk = (r: Pick<Requisition, 'totalAmount' | 'deptContributionAmount'>): number =>
+  Math.max(0, Number(r.totalAmount) - Number(r.deptContributionAmount || 0));
+
 const loadDb = (): OpenChurchDatabase => {
   try {
     // Purge legacy v1 demo cache if present
@@ -797,11 +801,13 @@ export const DepartmentService = {
     title: string;
     items: RequisitionLineItem[];
     requestedBy: string;
+    deptContributionAmount?: number;
   }): Requisition {
     const totalAmount = input.items.reduce(
       (sum, item) => sum + item.quantity * item.unitCost,
       0
     );
+    const deptContributionAmount = Math.min(totalAmount, Math.max(0, Math.round(input.deptContributionAmount || 0)));
     const nextNum = 1001 + dbCache.requisitions.length;
     const req: Requisition = {
       id: uid('req'),
@@ -813,6 +819,7 @@ export const DepartmentService = {
       title: input.title.trim(),
       items: input.items,
       totalAmount,
+      deptContributionAmount,
       amountPaid: 0,
       status: RequisitionStatus.PENDING_ADMIN,
       rejectionReason: '',
@@ -1348,8 +1355,9 @@ export const FinanceService = {
       if (input.requisitionId) {
         const req = draft.requisitions.find((r) => r.id === input.requisitionId);
         if (req) {
-          req.amountPaid = Math.min(req.totalAmount, req.amountPaid + input.amount);
-          if (req.amountPaid >= req.totalAmount) {
+          const ask = requisitionAsk(req);
+          req.amountPaid = Math.min(ask, req.amountPaid + input.amount);
+          if (req.amountPaid >= ask) {
             req.status = RequisitionStatus.PAID;
           }
         }
@@ -1979,6 +1987,13 @@ export const TelePastoringService = {
       draft.soulsWon.unshift(record);
     });
     return record;
+  },
+
+  /** Undo a "soul won" mark made by mistake (only before any follow-up has been logged). */
+  removeSoul(soulId: string): void {
+    saveDb((draft) => {
+      draft.soulsWon = draft.soulsWon.filter((s) => s.id !== soulId);
+    });
   },
 
   getSoulFollowupWeeks(tenantId: string, soulId?: string): SoulFollowupWeek[] {

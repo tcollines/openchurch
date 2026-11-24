@@ -14,7 +14,6 @@ import {
   Download,
   LogOut,
   MoreHorizontal,
-  Bell,
   ChevronLeft,
   PhoneCall,
   ShieldCheck,
@@ -23,6 +22,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { Avatar, initials } from '@/components/ui/kit';
+import { NotificationBell } from '@/modules/notifications/Notifications';
 import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/shared/enums';
 import { ROLE_LABELS } from '@/shared/formatters';
@@ -191,7 +191,7 @@ export const ADMIN_DEPT_VIEWS: { prefix: string; key: string; label: string; rol
 ];
 
 /** Screens opened from More / Inspect: own back arrow, no greeting header, no bottom bar on phones. */
-const SUB_PAGE = /^\/(admin\/(inspect|requests|contributions|team|profile|subscription)|platform\/tenants\/(?!new)[^/]+|airport-stars\/members\/[^/]+)/;
+const SUB_PAGE = /^\/(admin\/(inspect|requests|contributions|team|profile|subscription)|platform\/tenants\/(?!new)[^/]+|airport-stars\/members\/[^/]+|notifications)/;
 
 const today = () =>
   new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -359,14 +359,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
             </span>
           </button>
           )}
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="relative w-11 h-11 rounded-full bg-white flex items-center justify-center shrink-0"
-          >
-            <Bell className="w-5 h-5" strokeWidth={1.8} />
-            <span className="absolute top-2.5 right-3 w-2 h-2 rounded-full bg-church-neg ring-2 ring-white" />
-          </button>
+          <NotificationBell className="relative w-11 h-11 rounded-full bg-white flex items-center justify-center shrink-0" />
         </header>
 
         {/* ── Web: top bar ── */}
@@ -399,10 +392,7 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
             <button type="button" onClick={() => setSwitcherOpen(true)} className="oc-btn-ghost !h-11 !px-4 !text-sm">
               Account
             </button>
-            <button type="button" aria-label="Notifications" className="relative w-11 h-11 rounded-[14px] bg-white flex items-center justify-center">
-              <Bell className="w-5 h-5" strokeWidth={1.8} />
-              <span className="absolute top-2.5 right-3 w-2 h-2 rounded-full bg-church-neg ring-2 ring-white" />
-            </button>
+            <NotificationBell className="relative w-11 h-11 rounded-[14px] bg-white flex items-center justify-center" />
           </div>
         </div>
 

@@ -56,6 +56,7 @@ import {
   DepartmentService,
   FinanceService,
   PlatformService,
+  requisitionAsk,
 } from '@/services/churchService';
 import {
   DepartmentCode,
@@ -72,6 +73,7 @@ import { SubscriptionPage } from '@/modules/billing/SubscriptionPage';
 import { DueBanner } from '@/modules/billing/BillingParts';
 import { SubscriptionService } from '@/services/churchService';
 import { INSPECT_KEY_BY_CODE } from './insights';
+import { SoulsSummaryCard } from '@/modules/tele-pastoring/SoulsWon';
 import { churchContributions, churchRequests, ChurchProfilePage, ContributionsPage, InspectDepartmentPage, RequestsPage, teamAttendance, TeamAttendancePage } from './AdminTools';
 
 /* ── shared bits ─────────────────────────────────────────────── */
@@ -196,7 +198,7 @@ const AdminOverviewTab: React.FC = () => {
               {deptName(r.departmentId)} · {r.requisitionNumber}
             </span>
           </span>
-          <span className="oc-num text-[15px] text-white">{short(r.totalAmount)}</span>
+          <span className="oc-num text-[15px] text-white">{short(requisitionAsk(r))}</span>
         </div>
       ))}
       {pendingWps.slice(0, 2).map((w) => (
@@ -303,6 +305,7 @@ const AdminOverviewTab: React.FC = () => {
         <div className="lg:col-span-2 flex flex-col gap-4">
           {approvalsCard}
           {moneyCard}
+          <SoulsSummaryCard tenantId={activeTenantId} />
         </div>
         <div className="lg:hidden">{deptGrid}</div>
       </div>
@@ -360,12 +363,35 @@ const AdminApprovalsView: React.FC = () => {
         {statusBadge(r.status)}
       </div>
       <div>{r.items.map((it, i) => line(`${it.quantity}× ${it.description}`, `${currency} ${num(it.quantity * it.unitCost)}`, i))}</div>
-      <div className="flex justify-between items-baseline">
-        <span className="oc-sub">Requisition total</span>
-        <span className="oc-num text-[22px]">
-          {currency} {short(r.totalAmount)}
-        </span>
-      </div>
+      {Number(r.deptContributionAmount || 0) > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex justify-between text-sm">
+            <span className="text-church-muted">Requisition total</span>
+            <span className="font-display font-semibold tabular-nums">
+              {currency} {short(r.totalAmount)}
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-church-muted">{deptName(r.departmentId)} contributes</span>
+            <span className="font-display font-semibold tabular-nums text-church-pos">
+              − {currency} {short(Number(r.deptContributionAmount))}
+            </span>
+          </div>
+          <div className="flex justify-between items-baseline pt-2 border-t border-church-line">
+            <span className="oc-sub">Asking Administration for</span>
+            <span className="oc-num text-[22px]">
+              {currency} {short(requisitionAsk(r))}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-between items-baseline">
+          <span className="oc-sub">Requisition total</span>
+          <span className="oc-num text-[22px]">
+            {currency} {short(r.totalAmount)}
+          </span>
+        </div>
+      )}
       {r.rejectionReason && <p className="m-0 px-3 py-2.5 rounded-xl bg-church-negSoft text-sm text-[#8F1D14]">{r.rejectionReason}</p>}
       {actions && (
         <div className="grid grid-cols-2 gap-2.5">

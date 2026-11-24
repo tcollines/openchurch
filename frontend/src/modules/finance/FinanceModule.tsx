@@ -15,6 +15,7 @@ import {
   AttendanceAndMemberService,
   DepartmentService,
   FinanceService,
+  requisitionAsk,
 } from '@/services/churchService';
 import {
   DepartmentCode,
@@ -868,7 +869,7 @@ const OutflowsAndRemittancesView: React.FC = () => {
                   <span className="text-[13px] text-church-mist leading-snug">
                     {req.requisitionNumber} · approved by Administration
                   </span>
-                  <span className="oc-num text-[22px] text-church-lime whitespace-nowrap">{num(req.totalAmount - req.amountPaid)}</span>
+                  <span className="oc-num text-[22px] text-church-lime whitespace-nowrap">{num(requisitionAsk(req) - req.amountPaid)}</span>
                 </div>
                 <button
                   type="button"
@@ -879,7 +880,7 @@ const OutflowsAndRemittancesView: React.FC = () => {
                       serviceId: req.serviceId,
                       departmentId: req.departmentId,
                       requisitionId: req.id,
-                      amount: req.totalAmount - req.amountPaid,
+                      amount: requisitionAsk(req) - req.amountPaid,
                       paymentMethod: 'Mobile Money',
                       description: `Payout ${req.requisitionNumber}: ${req.title}`,
                       transactionDate: new Date().toISOString().slice(0, 10),
@@ -896,7 +897,7 @@ const OutflowsAndRemittancesView: React.FC = () => {
               <Stats
                 items={[
                   { label: `Spent in ${new Date().toLocaleDateString('en-GB', { month: 'short' })}`, value: num(spent), color: '#B42318' },
-                  { label: 'Awaiting payout', value: num(approvedReqs.reduce((t, r) => t + r.totalAmount - r.amountPaid, 0)), color: '#A15C00' },
+                  { label: 'Awaiting payout', value: num(approvedReqs.reduce((t, r) => t + requisitionAsk(r) - r.amountPaid, 0)), color: '#A15C00' },
                 ]}
               />
             </Card>

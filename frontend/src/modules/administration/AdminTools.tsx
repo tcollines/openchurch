@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
-import { readStore } from '@/services/churchService';
+import { readStore, requisitionAsk } from '@/services/churchService';
 import { DepartmentCode, RequisitionStatus, WorkflowStatus } from '@/shared/enums';
 import { Avatar, Badge, BadgeKind, Card, Chips, EmptyState, ListCard, MiniBar, num, PageHeader, Row, Stats, Tile, TileTone } from '@/components/ui/kit';
 import { BackRow } from '@/modules/platform/CouncilPages';
@@ -244,7 +244,7 @@ export const churchRequests = (tenantId: string): ReqRow[] => {
       title: r.title,
       sub: `${dname(r.departmentId)} · ${r.requisitionNumber}`,
       kind: 'Requisition',
-      amount: Number(r.totalAmount),
+      amount: requisitionAsk(r),
       status:
         r.status === RequisitionStatus.PENDING_ADMIN ? 'Pending' : r.status === RequisitionStatus.PAID ? 'Paid' : r.status === RequisitionStatus.APPROVED ? 'Approved' : 'Rejected',
       at: r.requestedAt || r.createdAt,

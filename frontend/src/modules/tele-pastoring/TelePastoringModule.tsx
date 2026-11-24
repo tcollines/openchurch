@@ -64,6 +64,7 @@ import {
   TextAreaInput,
 } from '@/components/ui/FormControls';
 import { HodMoreTab } from '@/components/hod-more/HodMoreTab';
+import { SoulWonTab } from './SoulsWon';
 
 const ThreeMissedServicesView: React.FC = () => {
   useChurchStoreRefresh();
@@ -410,13 +411,27 @@ const SoulsFourWeekTrackerView: React.FC = () => {
     setComment('');
   };
 
-  const [soulFilter, setSoulFilter] = useState<'progress' | 'integrated'>('progress');
+  const [soulFilter, setSoulFilter] = useState<'won' | 'progress' | 'integrated'>('won');
+  const today = new Date().toISOString().slice(0, 10);
   const inProgress = souls.filter((x) => x.status !== 'INTEGRATED');
   const integratedSouls = souls.filter((x) => x.status === 'INTEGRATED');
   const shown = soulFilter === 'progress' ? inProgress : integratedSouls;
   return (
     <>
-      <PageHeader title="Souls" subtitle="Four weeks of care for every new believer, until they’re part of the family." />
+      <PageHeader title="Souls" subtitle="Mark who gave their life to Christ, then care for them until they’re part of the family." />
+      <Chips
+        items={[
+          { value: 'won', label: 'Soul won', count: souls.filter((x) => x.wonDate === today).length },
+          { value: 'progress', label: 'In progress', count: inProgress.length },
+          { value: 'integrated', label: 'Integrated', count: integratedSouls.length },
+        ]}
+        value={soulFilter}
+        onChange={(v) => setSoulFilter(v as 'won' | 'progress' | 'integrated')}
+      />
+      {soulFilter === 'won' ? (
+        <SoulWonTab />
+      ) : (
+      <>
       <Card>
         <Stats
           items={[
@@ -426,14 +441,6 @@ const SoulsFourWeekTrackerView: React.FC = () => {
           ]}
         />
       </Card>
-      <Chips
-        items={[
-          { value: 'progress', label: 'In progress', count: inProgress.length },
-          { value: 'integrated', label: 'Integrated', count: integratedSouls.length },
-        ]}
-        value={soulFilter}
-        onChange={(v) => setSoulFilter(v as 'progress' | 'integrated')}
-      />
       {shown.length === 0 ? (
         <EmptyState icon={Sparkles} title="Nobody here yet" />
       ) : (
@@ -498,6 +505,8 @@ const SoulsFourWeekTrackerView: React.FC = () => {
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       <MobileSheet

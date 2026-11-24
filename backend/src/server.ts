@@ -2061,12 +2061,14 @@ app.post('/api/finance/expenses', requireTenantAuth, async (req: TenantRequest, 
     if (requisitionId) {
       const reqRow = await db.requisition.findUnique({ where: { id: requisitionId } });
       if (reqRow) {
-        const nextPaid = Math.min(reqRow.totalAmount, reqRow.amountPaid + Number(amount));
+        // Finance pays what was asked of Administration: the total minus the department's own contribution.
+        const ask = Math.max(0, reqRow.totalAmount - (reqRow.deptContributionAmount || 0));
+        const nextPaid = Math.min(ask, reqRow.amountPaid + Number(amount));
         await db.requisition.update({
           where: { id: requisitionId },
           data: {
             amountPaid: nextPaid,
-            status: nextPaid >= reqRow.totalAmount ? 'PAID' : reqRow.status,
+            status: nextPaid >= ask ? 'PAID' : reqRow.status,
           },
         });
       }
@@ -2197,12 +2199,13 @@ app.post('/api/requisitions', requireTenantAuth, async (req: TenantRequest, res)
     res.status(400).json({ error: 'Missing tenant scope' });
     return;
   }
-  const { departmentId, workplanId, serviceId, title, items } = req.body as {
+  const { departmentId, workplanId, serviceId, title, items, deptContributionAmount } = req.body as {
     departmentId: string;
     workplanId?: string | null;
     serviceId?: string | null;
     title: string;
     items: { description: string; quantity: number; unitCost: number }[];
+    deptContributionAmount?: number;
   };
   const count = await prisma.requisition.count({ where: { tenantId } });
   const totalAmount = items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
@@ -2217,6 +2220,7 @@ app.post('/api/requisitions', requireTenantAuth, async (req: TenantRequest, res)
       title,
       itemsJson: items,
       totalAmount,
+      deptContributionAmount: Math.min(totalAmount, Math.max(0, Number(deptContributionAmount || 0))),
       requestedBy: req.userId,
       requestedAt: new Date().toISOString().slice(0, 10),
     },
