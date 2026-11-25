@@ -55,7 +55,11 @@ export interface InspectData {
   spent: number;
   people: { name: string; sub: string; pct: number }[];
   peopleTitle: string;
+  /** Column label beside the people list (default "Attendance"). */
+  peopleAside?: string;
   activity: Activity[];
+  /** Discipleship only: where everyone is on the track. Shown in place of money. */
+  track?: { target: number; enrolled: number; inProgress: number; completed: number };
 }
 
 const monthStart = () => {
@@ -285,6 +289,7 @@ export const inspectDepartment = (tenantId: string, code: DepartmentCode): Inspe
     const classIds = new Set(classes.map((c) => c.id));
     const done = (memberId: string) => att.filter((a) => a.memberId === memberId && classIds.has(a.classId)).length;
     const completed = enrolled.filter((e) => done(e.memberId) >= target).length;
+    const started = enrolled.filter((e) => done(e.memberId) > 0).length;
     const latest = held[0];
     return {
       ...base,
@@ -297,6 +302,8 @@ export const inspectDepartment = (tenantId: string, code: DepartmentCode): Inspe
         ? `${presentAt(latest.id)} of ${enrolled.length} enrolled came to ${latest.name} · ${completed} completed so far`
         : `${enrolled.length} enrolled · no classes held yet`,
       peopleTitle: 'Progress',
+      peopleAside: 'Classes done',
+      track: { target, enrolled: enrolled.length - started, inProgress: started - completed, completed },
       people: enrolled
         .map((e) => {
           const n = done(e.memberId);

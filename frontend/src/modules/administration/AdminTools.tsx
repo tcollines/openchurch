@@ -78,6 +78,16 @@ const ACT_ICON: Record<Activity['kind'], React.ElementType> = {
   class: BookOpen,
 };
 
+/** Progress along the discipleship track: early stages aren't "bad", so no red. */
+const TrackBar: React.FC<{ pct: number }> = ({ pct }) => (
+  <span className="flex items-center gap-2 w-24 shrink-0">
+    <span className="flex-1 h-1.5 rounded-full bg-church-line overflow-hidden">
+      <span className={`block h-full ${pct >= 100 ? 'bg-church-pos' : 'bg-church-emerald'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+    </span>
+    <span className="w-9 text-right font-display text-[13px] font-bold tabular-nums">{pct}%</span>
+  </span>
+);
+
 export const InspectDepartmentPage: React.FC = () => {
   useChurchStoreRefresh();
   const { key = '' } = useParams();
@@ -106,8 +116,17 @@ export const InspectDepartmentPage: React.FC = () => {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         <DarkStat label={d.activityLabel} value={d.activityCount} />
         <DarkStat label={d.attendanceLabel} value={d.attendance === null ? '—' : `${d.attendance}%`} color="#A3E635" />
-        <DarkStat label="Contributed" value={`UGX ${short(d.contributed)}`} color="#A3E635" />
-        <DarkStat label="Spent" value={`UGX ${short(d.spent)}`} color="#FCD9A0" />
+        {d.track ? (
+          <>
+            <DarkStat label="Enrolled" value={d.track.enrolled + d.track.inProgress + d.track.completed} />
+            <DarkStat label="Completed" value={d.track.completed} color="#A3E635" />
+          </>
+        ) : (
+          <>
+            <DarkStat label="Contributed" value={`UGX ${short(d.contributed)}`} color="#A3E635" />
+            <DarkStat label="Spent" value={`UGX ${short(d.spent)}`} color="#FCD9A0" />
+          </>
+        )}
       </div>
     </Dark>
   );
@@ -140,7 +159,31 @@ export const InspectDepartmentPage: React.FC = () => {
       <span className="oc-sub pt-2.5 border-t border-church-line">{d.attendanceNote}</span>
     </Card>
   );
-  const money = (
+  const t = d.track;
+  const total = t ? t.enrolled + t.inProgress + t.completed : 0;
+  const share = (n: number) => (total ? `${(n / total) * 100}%` : '0%');
+  const money = t ? (
+    <Card>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="oc-h2">Discipleship track</span>
+        <span className="oc-sub">{t.target} classes to complete</span>
+      </div>
+      <Stats
+        items={[
+          { label: 'Enrolled', value: t.enrolled },
+          { label: 'In progress', value: t.inProgress, color: '#2F6B0A' },
+          { label: 'Completed', value: t.completed, color: '#116B43' },
+        ]}
+      />
+      <div className="flex flex-col gap-1.5">
+        <div role="img" aria-label={`${t.completed} completed, ${t.inProgress} in progress, ${t.enrolled} not started`} className="flex h-2.5 rounded-[5px] overflow-hidden bg-church-line">
+          <div className="bg-church-pos" style={{ width: share(t.completed) }} />
+          <div className="bg-church-lime" style={{ width: share(t.inProgress) }} />
+        </div>
+        <span className="oc-sub">{total ? `${t.completed} of ${total} enrolled have finished the track` : 'No one enrolled yet'}</span>
+      </div>
+    </Card>
+  ) : (
     <Card>
       <div className="flex items-baseline justify-between gap-3">
         <span className="oc-h2">Money</span>
@@ -184,11 +227,13 @@ export const InspectDepartmentPage: React.FC = () => {
     </ListCard>
   );
   const people = (
-    <ListCard title={d.peopleTitle === 'Who’s showing up' ? 'Who’s showing up' : d.peopleTitle} aside="Attendance">
+    <ListCard title={d.peopleTitle} aside={d.peopleAside ?? 'Attendance'}>
       {d.people.length ? (
-        d.people.slice(0, 8).map((p, i) => <Row key={p.name + i} lead={<Avatar name={p.name} />} title={p.name} sub={p.sub} trail={<MiniBar pct={p.pct} />} />)
+        d.people.slice(0, 8).map((p, i) => (
+          <Row key={p.name + i} lead={<Avatar name={p.name} />} title={p.name} sub={p.sub} trail={t ? <TrackBar pct={p.pct} /> : <MiniBar pct={p.pct} />} />
+        ))
       ) : (
-        <p className="py-4 oc-sub">No team members yet.</p>
+        <p className="py-4 oc-sub">{t ? 'No one enrolled yet.' : 'No team members yet.'}</p>
       )}
     </ListCard>
   );
