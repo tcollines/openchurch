@@ -65,6 +65,10 @@ export interface Department {
   code: DepartmentCode;
   name: string;
   description: string;
+  /** Custom departments only: keeps names unique within a church, plus the look chosen by Administration. */
+  slug?: string;
+  icon?: string | null;
+  color?: string | null;
 }
 
 export interface User {

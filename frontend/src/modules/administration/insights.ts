@@ -24,6 +24,7 @@ export const DEPT_DASHBOARD: Record<string, string> = {
 };
 
 const HEAD_ROLE: Record<string, string> = {
+  [DepartmentCode.CUSTOM]: 'DEPT_HOD',
   [DepartmentCode.FINANCE]: 'FINANCE_HOD',
   [DepartmentCode.BACENTA]: 'BACENTA_HOD',
   [DepartmentCode.AIRPORT_STARS]: 'AIRPORT_HOD',
@@ -70,12 +71,12 @@ const inMonth = (d?: string | null) => !!d && new Date(d) >= monthStart();
 const short = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
-export const inspectDepartment = (tenantId: string, code: DepartmentCode): InspectData | null => {
+export const inspectDepartment = (tenantId: string, code: DepartmentCode, departmentId?: string): InspectData | null => {
   const db = readStore();
-  const dept = db.departments.find((d) => d.tenantId === tenantId && d.code === code);
+  const dept = db.departments.find((d) => d.tenantId === tenantId && (departmentId ? d.id === departmentId : d.code === code));
   if (!dept) return null;
   const members = new Map(db.members.filter((m) => m.tenantId === tenantId).map((m) => [m.id, m]));
-  const head = db.users.find((u) => u.tenantId === tenantId && u.isActive && u.role === HEAD_ROLE[code] && (!u.departmentId || u.departmentId === dept.id));
+  const head = db.users.find((u) => u.tenantId === tenantId && u.isActive && u.role === HEAD_ROLE[code] && (code === DepartmentCode.CUSTOM ? u.departmentId === dept.id : !u.departmentId || u.departmentId === dept.id));
   const team = db.servingMembers.filter((s) => s.tenantId === tenantId && s.departmentId === dept.id);
   const services = db.services
     .filter((s) => s.tenantId === tenantId && new Date(s.serviceDate) <= new Date())
@@ -313,6 +314,40 @@ export const inspectDepartment = (tenantId: string, code: DepartmentCode): Inspe
         .slice(0, 8),
       activity: [
         ...held.slice(0, 5).map<Activity>((c) => ({ kind: 'class', title: c.name, sub: `${short(c.classDate)} · ${presentAt(c.id)} present · ${c.trainerName}`, at: c.classDate })),
+        ...reqActivity,
+      ]
+        .sort((a, b) => b.at.localeCompare(a.at))
+        .slice(0, 5),
+    };
+  }
+
+  // A church's own department: team at services, contributions and payouts.
+  if (code === DepartmentCode.CUSTOM) {
+    const ids = new Set(team.map((t) => t.memberId));
+    const served = last5.filter((s) => dutyFor(s.id).size > 0);
+    const money = db.financeTransactions
+      .filter((t) => t.tenantId === tenantId && t.departmentId === dept.id)
+      .sort((a, b) => (b.transactionDate || b.createdAt).localeCompare(a.transactionDate || a.createdAt));
+    const gifts = db.deptContributions.filter((c) => c.tenantId === tenantId && c.departmentId === dept.id);
+    const inDisc = (db.discipleshipEnrollments ?? []).filter((e) => e.tenantId === tenantId && e.status === 'ACTIVE' && ids.has(e.memberId)).length;
+    const latest = last5[last5.length - 1];
+    return {
+      ...base,
+      activityLabel: 'Services served',
+      activityCount: db.services.filter((s) => s.tenantId === tenantId && inMonth(s.serviceDate) && dutyFor(s.id).size > 0).length,
+      attendanceLabel: 'Team attendance',
+      attendance: avg(dutyBars),
+      bars: dutyBars,
+      attendanceNote: latest
+        ? `${dutyFor(latest.id).size} of ${team.length} served on ${short(latest.serviceDate)}${inDisc ? ` · ${inDisc} in discipleship classes` : ''}`
+        : served.length
+          ? ''
+          : 'No services yet',
+      peopleTitle: 'Who’s showing up',
+      people: teamPeople,
+      activity: [
+        ...money.slice(0, 4).map<Activity>((t) => ({ kind: 'money', title: t.description || 'Payout', sub: `${short(t.transactionDate || t.createdAt)} · ${t.paymentMethod}`, amount: Number(t.amount), at: t.transactionDate || t.createdAt })),
+        ...gifts.slice(0, 3).map<Activity>((c) => ({ kind: 'money', title: 'Team contribution', sub: `${short(c.contributionDate)} · ${c.purpose || 'Department giving'}`, amount: Number(c.amount), at: c.contributionDate })),
         ...reqActivity,
       ]
         .sort((a, b) => b.at.localeCompare(a.at))

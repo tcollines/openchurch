@@ -68,7 +68,8 @@ export const buildNotifications = (user: User | null, tenant: Tenant | null): No
     const code = HEAD_DEPT[user.role];
     return code ? depts.find((d) => d.code === code)?.id : user.departmentId || undefined;
   })();
-  const myMore = MORE_ROUTE[depts.find((d) => d.id === myDeptId)?.code ?? ''] ?? '/';
+  const myDept = depts.find((d) => d.id === myDeptId);
+  const myMore = myDept?.code === 'CUSTOM' ? `/dept/${myDept.id}/more` : MORE_ROUTE[myDept?.code ?? ''] ?? '/';
   const since = Date.now() - 30 * 864e5;
   const recent = (iso: string) => new Date(iso).getTime() >= since;
   const out: Notice[] = [];

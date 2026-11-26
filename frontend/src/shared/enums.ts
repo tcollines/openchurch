@@ -7,6 +7,8 @@ export enum DepartmentCode {
   CHILDRENS_CHURCH = 'CHILDRENS_CHURCH',
   CAMPUSES = 'CAMPUSES',
   DISCIPLESHIP = 'DISCIPLESHIP',
+  /** Any other department a church adds (Choir, Ushering, Media…). */
+  CUSTOM = 'CUSTOM',
 }
 
 export enum UserRole {
@@ -26,6 +28,9 @@ export enum UserRole {
   CAMPUS_LEADER = 'CAMPUS_LEADER',
   DISCIPLESHIP_HOD = 'DISCIPLESHIP_HOD',
   DISCIPLESHIP_MEMBER = 'DISCIPLESHIP_MEMBER',
+  /** Head and team members of a church's own (custom) department. */
+  DEPT_HOD = 'DEPT_HOD',
+  DEPT_MEMBER = 'DEPT_MEMBER',
 }
 
 export enum ServiceCategory {

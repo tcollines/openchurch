@@ -644,6 +644,34 @@ export const PlatformService = {
 // ─── DEPARTMENTS & UNIVERSAL HOD "MORE" SERVICE ───────────────────────────────
 
 export const DepartmentService = {
+  getDepartmentById(departmentId: string | null | undefined): Department | null {
+    return departmentId ? dbCache.departments.find((d) => d.id === departmentId) ?? null : null;
+  },
+
+  /** The church's own departments (Choir, Ushering…), beyond the core ones. */
+  getCustomDepartments(tenantId: string): Department[] {
+    return dbCache.departments.filter((d) => d.tenantId === tenantId && d.code === DepartmentCode.CUSTOM).sort((a, b) => a.name.localeCompare(b.name));
+  },
+
+  /** Administration adds a department. Created on the server (Administration only), then kept locally. */
+  async createDepartment(input: { tenantId: string; name: string; description: string; icon: string; color: string }): Promise<Department> {
+    const name = input.name.trim();
+    if (name.length < 2) throw new Error('Give the department a name.');
+    const taken = dbCache.departments.some((d) => d.tenantId === input.tenantId && d.name.trim().toLowerCase() === name.toLowerCase());
+    if (taken) throw new Error(`There’s already a department called ${name}.`);
+    const res = await apiClient.post<{ department: Department }>(
+      '/departments',
+      { name, description: input.description.trim(), icon: input.icon, color: input.color },
+      { tenantId: input.tenantId }
+    );
+    const dept = res.department;
+    saveDb((draft) => {
+      draft.departments = draft.departments.filter((d) => d.id !== dept.id);
+      draft.departments.push(dept);
+    });
+    return dept;
+  },
+
   getDepartments(tenantId: string): Department[] {
     return dbCache.departments.filter((d) => d.tenantId === tenantId);
   },
@@ -2463,6 +2491,7 @@ export const HEAD_ROLE_BY_DEPT: Record<DepartmentCode, UserRole> = {
   [DepartmentCode.CHILDRENS_CHURCH]: UserRole.CHILDREN_HOD,
   [DepartmentCode.CAMPUSES]: UserRole.CAMPUS_HOD,
   [DepartmentCode.DISCIPLESHIP]: UserRole.DISCIPLESHIP_HOD,
+  [DepartmentCode.CUSTOM]: UserRole.DEPT_HOD,
 };
 
 

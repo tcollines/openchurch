@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, Check, ChevronRight, Phone, MessageCircle, Trash2, UserPlus, Users } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Home, Phone, MessageCircle, Trash2, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
 import { AttendanceAndMemberService, FellowshipService, MemberDirectoryService, readStore } from '@/services/churchService';
 import { FellowshipUnitType } from '@/shared/enums';
-import { Member } from '@/shared/types';
+import { FellowshipUnit, Member } from '@/shared/types';
 import { getWhatsAppLink } from '@/shared/formatters';
 import { Avatar, Badge, Card, Chips, ContactButtons, EmptyState, PageHeader, SearchField, Stats } from '@/components/ui/kit';
 import { MobileSheet, PhoneInput, SelectInput, TextInput } from '@/components/ui/FormControls';
@@ -216,7 +216,7 @@ const Profile: React.FC<{ info: Info; services: number; compact?: boolean; onRem
   const details: [string, string][] = [
     ['Gender', m.gender],
     ['Area', m.residence],
-    ['Bacenta', bacenta || 'Unassigned'],
+    ['Bacenta', bacenta || 'No Bacenta yet'],
     ['Member since', fmtLong(m.joinedAt || m.createdAt)],
   ];
   const head = (
@@ -326,9 +326,46 @@ const Profile: React.FC<{ info: Info; services: number; compact?: boolean; onRem
   );
 };
 
+/* ── Bacenta helpers ────────────────────────────────────────────────────── */
+
+const BacentaLabel: React.FC<{ unit: FellowshipUnit | null | undefined }> = ({ unit }) =>
+  unit ? (
+    <span className="inline-flex items-center gap-1 font-semibold text-church-emerald min-w-0">
+      <Home className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">{unit.name}</span>
+    </span>
+  ) : (
+    <span className="text-[#A15C00]">No Bacenta</span>
+  );
+
+/** Pick a Bacenta to filter by ('' = all, 'none' = not in a Bacenta). */
+const BacentaPicker: React.FC<{ value: string; onChange: (v: string) => void; units: FellowshipUnit[]; noneCount: number }> = ({ value, onChange, units, noneCount }) => {
+  const active = value !== '';
+  const label = value === '' ? 'All Bacentas' : value === 'none' ? 'Not in a Bacenta' : `${units.find((u) => u.id === value)?.name ?? 'Bacenta'}`;
+  return (
+    <label className={`relative flex items-center gap-2.5 h-[50px] px-4 rounded-2xl ${active ? 'bg-church-forest text-[#EEF5E9]' : 'bg-white text-church-text'}`}>
+      <Home className={`w-5 h-5 shrink-0 ${active ? 'text-church-lime' : 'text-church-emerald'}`} aria-hidden="true" />
+      <span className="flex-1 min-w-0 flex flex-col leading-tight">
+        <span className={`text-xs font-medium ${active ? 'text-[#A9B8AC]' : 'text-church-muted'}`}>Bacenta</span>
+        <span className="text-[15px] font-semibold truncate">{label}</span>
+      </span>
+      <ChevronDown className="w-5 h-5 shrink-0" aria-hidden="true" />
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Filter by Bacenta" className="absolute inset-0 opacity-0 cursor-pointer">
+        <option value="">All Bacentas</option>
+        {units.map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.name}
+          </option>
+        ))}
+        <option value="none">Not in a Bacenta ({noneCount})</option>
+      </select>
+    </label>
+  );
+};
+
 /* ── Members list ───────────────────────────────────────────────────────── */
 
-type Filter = 'all' | 'new' | 'away';
+type Filter = 'all' | 'new' | 'away' | 'nobac';
 type Notice = { text: string; undoId?: string } | null;
 
 export const AirportMembersPage: React.FC = () => {
@@ -337,6 +374,7 @@ export const AirportMembersPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [filter, setFilter] = useState<Filter>('all');
+  const [bac, setBac] = useState('');
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
@@ -348,10 +386,16 @@ export const AirportMembersPage: React.FC = () => {
   }, []);
   if (!tenant) return null;
   const { infos, services } = getDirectory(tenant.id);
-  const counts = { all: infos.length, new: infos.filter((i) => i.tag === 'new').length, away: infos.filter((i) => i.tag === 'away').length };
+  const units = FellowshipService.getUnits(tenant.id, FellowshipUnitType.BACENTA).sort((a, b) => a.name.localeCompare(b.name));
+  const unitOf = new Map(units.map((u) => [u.id, u]));
+  const inUnit = (i: Info) => (i.m.bacentaId ? unitOf.get(i.m.bacentaId) ?? null : null);
+  const noneCount = infos.filter((i) => !inUnit(i)).length;
+  const counts = { all: infos.length, new: infos.filter((i) => i.tag === 'new').length, away: infos.filter((i) => i.tag === 'away').length, nobac: noneCount };
+  const unit = bac && bac !== 'none' ? unitOf.get(bac) ?? null : null;
   const term = q.trim().toLowerCase();
-  const shown = infos
-    .filter((i) => filter === 'all' || i.tag === filter)
+  const inBac = infos.filter((i) => (bac === '' ? true : bac === 'none' ? !inUnit(i) : i.m.bacentaId === bac));
+  const shown = inBac
+    .filter((i) => filter === 'all' || (filter === 'nobac' ? !inUnit(i) : i.tag === filter))
     .filter((i) => !term || i.m.fullName.toLowerCase().includes(term) || i.m.phoneNumber.toLowerCase().includes(term) || i.m.residence.toLowerCase().includes(term));
   const sel = infos.find((i) => i.m.id === selected) ?? shown[0] ?? null;
   const undo = async (id: string) => {
@@ -379,11 +423,27 @@ export const AirportMembersPage: React.FC = () => {
               <Avatar name={i.m.fullName} />
               <span className="flex-1 min-w-0 flex flex-col gap-0.5">
                 <span className="text-[15px] font-semibold truncate">{i.m.fullName}</span>
-                <span className="oc-sub truncate">
+                <span className="oc-sub truncate md:hidden">
+                  {unit ? (
+                    `${i.m.phoneNumber} · ${i.m.residence}`
+                  ) : (
+                    <>
+                      <BacentaLabel unit={inUnit(i)} /> · {i.m.residence}
+                    </>
+                  )}
+                </span>
+                <span className="oc-sub truncate hidden md:block">
                   {i.m.phoneNumber} · {i.m.residence}
                 </span>
               </span>
-              <TagBadge tag={i.tag} />
+              {!unit && (
+                <span className="hidden md:flex w-[140px] shrink-0 text-sm">
+                  <BacentaLabel unit={inUnit(i)} />
+                </span>
+              )}
+              <span className="md:w-[112px] shrink-0 flex justify-end">
+                <TagBadge tag={i.tag} />
+              </span>
               <ChevronRight className="w-[18px] h-[18px] text-church-faint shrink-0" />
             </button>
           );
@@ -391,7 +451,11 @@ export const AirportMembersPage: React.FC = () => {
       </div>
     </section>
   ) : (
-    <EmptyState icon={Users} title={infos.length ? 'No one matches' : 'No members yet'} sub={infos.length ? 'Try another name, phone or area.' : 'Add the first member to get started.'} />
+    <EmptyState
+      icon={Users}
+      title={!infos.length ? 'No members yet' : unit && !inBac.length ? `No members in ${unit.name} yet` : 'No one matches'}
+      sub={!infos.length ? 'Add the first member to get started.' : unit && !inBac.length ? 'Choose their Bacenta when you add or edit a member.' : 'Try another name, phone or area.'}
+    />
   );
 
   const addBtn = (
@@ -430,17 +494,91 @@ export const AirportMembersPage: React.FC = () => {
       </div>
       <div className="flex gap-5 items-start">
         <div className="flex-[3] min-w-0 flex flex-col gap-4">
-          <Chips<Filter>
-            items={[
-              { value: 'all', label: 'All', count: counts.all },
-              { value: 'new', label: 'First timers', count: counts.new },
-              { value: 'away', label: 'Not seen 3 wks', count: counts.away },
-            ]}
-            value={filter}
-            onChange={setFilter}
-          />
-          <SearchField value={q} onChange={setQ} placeholder="Search name, phone or area" />
+          {!unit && (
+            <Chips<Filter>
+              items={[
+                { value: 'all', label: 'All', count: counts.all },
+                { value: 'new', label: 'First timers', count: counts.new },
+                { value: 'away', label: 'Not seen 3 wks', count: counts.away },
+                { value: 'nobac', label: 'No Bacenta', count: counts.nobac },
+              ]}
+              value={filter}
+              onChange={setFilter}
+            />
+          )}
+          <div className="grid gap-3 md:grid-cols-[240px_1fr]">
+            <BacentaPicker
+              value={bac}
+              units={units}
+              noneCount={noneCount}
+              onChange={(v) => {
+                setBac(v);
+                setFilter('all');
+                setSelected('');
+              }}
+            />
+            <SearchField value={q} onChange={setQ} placeholder={unit ? `Search ${unit.name} members` : 'Search name, phone or area'} />
+          </div>
+          {unit && (
+            <Card>
+              <div className="flex items-center gap-3">
+                <span className="w-11 h-11 rounded-xl bg-[#E3F1D4] text-[#2F5D10] flex items-center justify-center shrink-0">
+                  <Home className="w-[22px] h-[22px]" />
+                </span>
+                <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <span className="font-display text-lg font-bold leading-tight truncate">{unit.name}</span>
+                  <span className="oc-sub">
+                    Meets {unit.meetingDay}
+                    {unit.locationOrInstitution ? ` · ${unit.locationOrInstitution}` : ''}
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-center gap-3 pt-3 border-t border-church-line">
+                <Avatar name={unit.leaderName || 'Leader'} />
+                <span className="flex-1 min-w-0 flex flex-col">
+                  <span className="oc-sub">Bacenta leader</span>
+                  <span className="text-[15px] font-semibold truncate">{unit.leaderName || 'No leader yet'}</span>
+                </span>
+                {unit.leaderPhone && <ContactButtons phone={unit.leaderPhone} name={unit.leaderName} />}
+              </div>
+              <div className="pt-3 border-t border-church-line">
+                <Stats
+                  items={[
+                    { label: 'Members', value: inBac.length },
+                    { label: 'First timers', value: inBac.filter((i) => i.tag === 'new').length, color: '#116B43' },
+                    { label: 'Not seen 3 wks', value: inBac.filter((i) => i.tag === 'away').length, color: '#A15C00' },
+                  ]}
+                />
+              </div>
+            </Card>
+          )}
           {list}
+          {unit && (
+            <section className="bg-white rounded-[20px] px-4 py-1">
+              <div className="flex items-baseline justify-between pt-3 pb-1">
+                <span className="oc-h2">Other Bacentas</span>
+                <span className="oc-sub">Members</span>
+              </div>
+              <div className="divide-y divide-church-line">
+                {units
+                  .filter((u) => u.id !== unit.id)
+                  .map((u) => (
+                    <button key={u.id} type="button" onClick={() => setBac(u.id)} className="oc-press w-full flex items-center gap-3 min-h-[52px] text-left">
+                      <Home className="w-[18px] h-[18px] text-church-emerald shrink-0" />
+                      <span className="flex-1 text-[15px] font-semibold truncate">{u.name}</span>
+                      <span className="oc-sub tabular-nums">{infos.filter((i) => i.m.bacentaId === u.id).length}</span>
+                      <ChevronRight className="w-[18px] h-[18px] text-church-faint shrink-0" />
+                    </button>
+                  ))}
+                <button type="button" onClick={() => setBac('none')} className="oc-press w-full flex items-center gap-3 min-h-[52px] text-left">
+                  <AlertTriangle className="w-[18px] h-[18px] text-[#A15C00] shrink-0" />
+                  <span className="flex-1 text-[15px] font-semibold">Not in a Bacenta</span>
+                  <span className="oc-sub tabular-nums">{noneCount}</span>
+                  <ChevronRight className="w-[18px] h-[18px] text-church-faint shrink-0" />
+                </button>
+              </div>
+            </section>
+          )}
           <button type="button" onClick={() => setAdding(true)} className="md:hidden oc-press h-[52px] rounded-2xl border-[1.5px] border-dashed border-[#C9CEC6] flex items-center justify-center gap-2 font-semibold text-[15px]">
             <UserPlus className="w-[18px] h-[18px]" /> Add a member
           </button>

@@ -23,6 +23,7 @@ enum DepartmentCode {
   CHILDRENS_CHURCH
   CAMPUSES
   DISCIPLESHIP
+  CUSTOM
 }
 
 enum UserRole {
@@ -42,6 +43,8 @@ enum UserRole {
   CAMPUS_LEADER
   DISCIPLESHIP_HOD
   DISCIPLESHIP_MEMBER
+  DEPT_HOD
+  DEPT_MEMBER
 }
 
 enum ServiceCategory {
@@ -190,6 +193,10 @@ model Department {
   code        DepartmentCode
   name        String
   description String         @default("")
+  /// Custom departments (code CUSTOM): unique per church; '' for the core departments.
+  slug        String         @default("")
+  icon        String?
+  color       String?
   createdAt   DateTime       @default(now()) @map("created_at")
 
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -202,7 +209,7 @@ model Department {
   serviceDuties       ServiceAttendance[]
   discipleshipClasses DiscipleshipClass[]
 
-  @@unique([tenantId, code])
+  @@unique([tenantId, code, slug])
   @@map("departments")
 }
 

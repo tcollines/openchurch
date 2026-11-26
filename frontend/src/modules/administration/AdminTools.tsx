@@ -20,7 +20,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useChurchStoreRefresh } from '@/hooks/useChurchStoreRefresh';
-import { readStore, requisitionAsk } from '@/services/churchService';
+import { DepartmentService, readStore, requisitionAsk } from '@/services/churchService';
+import { customDeptLook } from '@/shared/deptLook';
 import { DepartmentCode, RequisitionStatus, WorkflowStatus } from '@/shared/enums';
 import { Avatar, Badge, BadgeKind, Card, Chips, EmptyState, ListCard, MiniBar, num, PageHeader, Row, Stats, Tile, TileTone } from '@/components/ui/kit';
 import { BackRow } from '@/modules/platform/CouncilPages';
@@ -93,10 +94,13 @@ export const InspectDepartmentPage: React.FC = () => {
   const { key = '' } = useParams();
   const navigate = useNavigate();
   const { tenant } = useAuth();
-  const code = INSPECT_KEYS[key];
+  // Core departments use a short key (bacentas, finance…); a church's own departments use their id.
+  const custom = INSPECT_KEYS[key] ? null : DepartmentService.getDepartmentById(key);
+  const code = INSPECT_KEYS[key] ?? (custom && custom.tenantId === tenant?.id ? DepartmentCode.CUSTOM : undefined);
   if (!code) return <Navigate to="/admin/overview" replace />;
-  const d = tenant ? inspectDepartment(tenant.id, code) : null;
-  const look = DEPT_LOOK[code];
+  const d = tenant ? inspectDepartment(tenant.id, code, custom?.id) : null;
+  const cl = custom ? customDeptLook(custom) : null;
+  const look = cl ? { icon: cl.icon, tone: 'neutral' as TileTone, label: custom!.name, colors: [cl.bg, cl.fg] as [string, string] } : { ...DEPT_LOOK[code], colors: undefined };
   const back = <BackRow label="Overview" onClick={() => navigate('/admin/overview')} />;
   if (!d) {
     return (
@@ -108,7 +112,7 @@ export const InspectDepartmentPage: React.FC = () => {
   }
   const balance = d.contributed - d.spent;
   const spentPct = d.contributed ? Math.min(100, Math.round((d.spent / d.contributed) * 100)) : d.spent ? 100 : 0;
-  const open = () => navigate(DEPT_DASHBOARD[code]);
+  const open = () => navigate(custom ? `/dept/${custom.id}/overview` : DEPT_DASHBOARD[code]);
 
   const summary = (
     <Dark>
@@ -242,7 +246,7 @@ export const InspectDepartmentPage: React.FC = () => {
     <>
       {back}
       <div className="flex items-center gap-3">
-        <Tile icon={look.icon} tone={look.tone} size={52} />
+        <Tile icon={look.icon} tone={look.tone} colors={look.colors} size={52} />
         <span className="flex-1 min-w-0 flex flex-col gap-0.5">
           <span className="font-display text-2xl md:text-[30px] leading-[1.15] font-bold tracking-[-0.015em]">{look.label}</span>
           <span className="oc-sub">
@@ -480,7 +484,7 @@ export const ContributionsPage: React.FC = () => {
     .sort((a, b) => b.total - a.total);
   const max = Math.max(1, ...byDept.map((x) => x.total));
   const label = period === 'month' ? monthName() : period === 'last' ? monthName(monthStart(-1)) : String(new Date().getFullYear());
-  const deptName = (id: string) => DEPT_LOOK[depts.find((d) => d.id === id)?.code ?? '']?.label ?? 'Department';
+  const deptName = (id: string) => DEPT_LOOK[depts.find((d) => d.id === id)?.code ?? '']?.label ?? depts.find((d) => d.id === id)?.name ?? 'Department';
 
   const card = (
     <Dark>
@@ -502,10 +506,11 @@ export const ContributionsPage: React.FC = () => {
       </div>
       <div className="divide-y divide-church-line">
         {byDept.map(({ d, total: t, gave, size }) => {
-          const look = DEPT_LOOK[d.code] ?? DEPT_LOOK[DepartmentCode.ADMIN];
+          const cl = d.code === DepartmentCode.CUSTOM ? customDeptLook(d) : null;
+          const look = cl ? { icon: cl.icon, tone: 'neutral' as TileTone, label: d.name } : DEPT_LOOK[d.code] ?? DEPT_LOOK[DepartmentCode.ADMIN];
           return (
             <div key={d.id} className="flex items-center gap-3 py-3">
-              <Tile icon={look.icon} tone={look.tone} />
+              <Tile icon={look.icon} tone={look.tone} colors={cl ? [cl.bg, cl.fg] : undefined} />
               <span className="flex-1 min-w-0 flex flex-col gap-1.5">
                 <span className="flex justify-between gap-2">
                   <span className="text-[15px] font-semibold truncate">{look.label}</span>
@@ -610,7 +615,7 @@ export const TeamAttendancePage: React.FC = () => {
   const list = (
     <>
       <Chips<string>
-        items={[{ value: 'all', label: 'All', count: a.people.length }, ...codes.map((c) => ({ value: c, label: DEPT_LOOK[c]?.label ?? c, count: a.people.filter((p) => p.deptCode === c).length }))]}
+        items={[{ value: 'all', label: 'All', count: a.people.length }, ...codes.map((c) => ({ value: c, label: DEPT_LOOK[c]?.label ?? (c === DepartmentCode.CUSTOM ? 'Other departments' : c), count: a.people.filter((p) => p.deptCode === c).length }))]}
         value={dept}
         onChange={setDept}
       />

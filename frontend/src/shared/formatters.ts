@@ -56,6 +56,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.CAMPUS_LEADER]: 'Campus Leader',
   [UserRole.DISCIPLESHIP_HOD]: 'Head of Discipleship',
   [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship Check-In Member',
+  [UserRole.DEPT_HOD]: 'Head of Department',
+  [UserRole.DEPT_MEMBER]: 'Department Team Member',
 };
 
 export const HOD_ROLES: UserRole[] = [
@@ -67,6 +69,7 @@ export const HOD_ROLES: UserRole[] = [
   UserRole.CHILDREN_HOD,
   UserRole.CAMPUS_HOD,
   UserRole.DISCIPLESHIP_HOD,
+  UserRole.DEPT_HOD,
 ];
 
 export const isHodUser = (user: User | null): boolean => {
@@ -99,6 +102,9 @@ export const getDepartmentCodeForRole = (role: UserRole): DepartmentCode | null 
     case UserRole.DISCIPLESHIP_HOD:
     case UserRole.DISCIPLESHIP_MEMBER:
       return DepartmentCode.DISCIPLESHIP;
+    case UserRole.DEPT_HOD:
+    case UserRole.DEPT_MEMBER:
+      return DepartmentCode.CUSTOM;
     default:
       return null;
   }
@@ -137,6 +143,9 @@ export const getDefaultRouteForUser = (user: User | null, tenant?: Tenant | null
     case UserRole.DISCIPLESHIP_HOD:
     case UserRole.DISCIPLESHIP_MEMBER:
       return '/discipleship/classes';
+    case UserRole.DEPT_HOD:
+    case UserRole.DEPT_MEMBER:
+      return user.departmentId ? `/dept/${user.departmentId}/overview` : '/login';
     default:
       return '/login';
   }

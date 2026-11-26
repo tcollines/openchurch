@@ -13,6 +13,7 @@ import { AirportStarsModule } from '@/modules/airport-stars/AirportStarsModule';
 import { TelePastoringModule } from '@/modules/tele-pastoring/TelePastoringModule';
 import { ChildrensChurchModule } from '@/modules/childrens-church/ChildrensChurchModule';
 import { DiscipleshipModule } from '@/modules/discipleship/DiscipleshipModule';
+import { DepartmentModule } from '@/modules/department/DepartmentModule';
 import { SubscriptionLock } from '@/modules/billing/SubscriptionLock';
 import { SetupPage } from '@/modules/setup/SetupPage';
 import { LegalPage } from '@/modules/legal/LegalPage';
@@ -216,6 +217,16 @@ const AppRoutes: React.FC = () => {
         element={
           <ProtectedGuard allowedRoles={[UserRole.DISCIPLESHIP_HOD, UserRole.DISCIPLESHIP_MEMBER]}>
             <DiscipleshipModule />
+          </ProtectedGuard>
+        }
+      />
+
+      {/* 9. A church's own departments (Choir, Ushering, Media…) */}
+      <Route
+        path="/dept/:deptId/*"
+        element={
+          <ProtectedGuard allowedRoles={[UserRole.DEPT_HOD, UserRole.DEPT_MEMBER]}>
+            <DepartmentModule />
           </ProtectedGuard>
         }
       />

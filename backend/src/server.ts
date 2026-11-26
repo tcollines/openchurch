@@ -340,6 +340,8 @@ const ROLE_TITLES: Record<UserRole, string> = {
   CAMPUS_LEADER: 'Campus Leader',
   DISCIPLESHIP_HOD: 'Head of Discipleship',
   DISCIPLESHIP_MEMBER: 'Discipleship Check-In',
+  DEPT_HOD: 'Head of Department',
+  DEPT_MEMBER: 'Department Team Member',
 };
 
 async function sendDepartmentLeaderInvite(params: {
@@ -1166,6 +1168,7 @@ const HOD_ROLE_BY_DEPT: Partial<Record<DepartmentCode, UserRole>> = {
   CHILDRENS_CHURCH: 'CHILDREN_HOD',
   CAMPUSES: 'CAMPUS_HOD',
   DISCIPLESHIP: 'DISCIPLESHIP_HOD',
+  CUSTOM: 'DEPT_HOD',
 };
 
 app.post('/api/platform/tenants', requireTenantAuth, async (req: TenantRequest, res) => {
@@ -1720,6 +1723,53 @@ app.post('/api/setup/start-trial', requireTenantAuth, async (req: TenantRequest,
 });
 
 // Create a department head or serving-member dashboard login & email their invite link
+// ─── A church's own departments (Choir, Ushering, Media…) ───────────────────
+const DEPT_ICON_KEYS = new Set(['music', 'users', 'megaphone', 'camera', 'heart', 'mic', 'shield', 'hand', 'care', 'food', 'sparkles', 'church']);
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+
+app.post('/api/departments', requireTenantAuth, async (req: TenantRequest, res) => {
+  const tenantId = resolveTargetTenantId(req);
+  if (!tenantId || (req.userRole !== 'ADMIN' && req.userRole !== 'PLATFORM_ADMIN')) {
+    res.status(403).json({ error: 'Only the church Administrator can add departments' });
+    return;
+  }
+  try {
+    const { name, description, icon, color } = req.body as { name?: string; description?: string; icon?: string; color?: string };
+    const clean = String(name ?? '').trim().replace(/\s+/g, ' ');
+    if (clean.length < 2 || clean.length > 60) {
+      res.status(400).json({ error: 'Give the department a name (2 to 60 letters).' });
+      return;
+    }
+    const slug = slugify(clean) || `dept-${crypto.randomBytes(3).toString('hex')}`;
+    const existing = await prisma.department.findMany({ where: { tenantId }, select: { name: true, slug: true } });
+    if (existing.some((d) => d.name.trim().toLowerCase() === clean.toLowerCase() || (d.slug && d.slug === slug))) {
+      res.status(409).json({ error: `There’s already a department called ${clean}.` });
+      return;
+    }
+    const department = await prisma.department.create({
+      data: {
+        tenantId,
+        code: 'CUSTOM',
+        slug,
+        name: clean,
+        description: String(description ?? '').trim().slice(0, 200),
+        icon: icon && DEPT_ICON_KEYS.has(icon) ? icon : 'users',
+        color: typeof color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(color) ? color : null,
+      },
+    });
+    res.status(201).json({ department });
+  } catch (error) {
+    console.error('Create department failed', error);
+    res.status(500).json({ error: 'Could not add the department' });
+  }
+});
+
 app.post('/api/users', requireTenantAuth, async (req: TenantRequest, res) => {
   const tenantId = resolveTargetTenantId(req);
   if (!tenantId) {
@@ -2035,8 +2085,8 @@ app.post(
       return;
     }
 
-    const finDept = await prisma.department.findUnique({
-      where: { tenantId_code: { tenantId, code: 'FINANCE' } },
+    const finDept = await prisma.department.findFirst({
+      where: { tenantId, code: 'FINANCE' },
     });
 
     const clientId = asClientUuid(id);
@@ -2412,9 +2462,9 @@ app.post('/api/fellowship/finance', requireTenantAuth, async (req: TenantRequest
     transactionDate,
   } = req.body;
 
-  const dept = await prisma.department.findUnique({
+  const dept = await prisma.department.findFirst({
     where: {
-      tenantId_code: {
+      ...{
         tenantId,
         code: unitType === 'BACENTA' ? 'BACENTA' : 'CAMPUSES',
       },
@@ -2466,8 +2516,8 @@ app.post(
       const numericAmount = Number(amountSpentOrSent || 0);
 
       if (numericAmount > 0) {
-        const teleDept = await db.department.findUnique({
-          where: { tenantId_code: { tenantId, code: 'TELE_PASTORING' } },
+        const teleDept = await db.department.findFirst({
+          where: { tenantId, code: 'TELE_PASTORING' },
         });
         const member = await db.member.findUnique({ where: { id: memberId } });
         const exp = await db.financeTransaction.create({

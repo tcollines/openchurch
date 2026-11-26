@@ -29,6 +29,7 @@ import { NotificationBell } from '@/modules/notifications/Notifications';
 import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/shared/enums';
 import { ROLE_LABELS } from '@/shared/formatters';
+import { DepartmentService } from '@/services/churchService';
 import { MobileSheet } from '@/components/ui/FormControls';
 import { PwaInstallBanner, usePwaInstall } from '@/components/pwa/PwaInstallPrompt';
 
@@ -146,6 +147,15 @@ export const getNavItemsForRole = (role: UserRole): NavItem[] => {
     case UserRole.DISCIPLESHIP_MEMBER:
       // Check-in only, like Airport Stars members.
       return [{ to: '/discipleship/classes', label: 'Class check-in', shortLabel: 'Check-In', icon: CheckCircle2 }];
+    // A church's own departments: ':dept' is swapped for the department's id by the shell.
+    case UserRole.DEPT_HOD:
+      return [
+        { to: '/dept/:dept/overview', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard },
+        { to: '/dept/:dept/team', label: 'Team & duty', shortLabel: 'Team', icon: ShieldCheck },
+        { to: '/dept/:dept/more', label: 'More', shortLabel: 'More', icon: MoreHorizontal },
+      ];
+    case UserRole.DEPT_MEMBER:
+      return [{ to: '/dept/:dept/overview', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard }];
     default:
       return [];
   }
@@ -168,6 +178,8 @@ const DEPT_LABEL: Partial<Record<UserRole, string>> = {
   [UserRole.CAMPUS_LEADER]: 'My campus',
   [UserRole.DISCIPLESHIP_HOD]: 'Discipleship',
   [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship',
+  [UserRole.DEPT_HOD]: 'Department',
+  [UserRole.DEPT_MEMBER]: 'Department',
 };
 
 const SHORT_ROLE: Record<UserRole, string> = {
@@ -187,6 +199,8 @@ const SHORT_ROLE: Record<UserRole, string> = {
   [UserRole.CAMPUS_LEADER]: 'Campus Leader',
   [UserRole.DISCIPLESHIP_HOD]: 'Head of Discipleship',
   [UserRole.DISCIPLESHIP_MEMBER]: 'Discipleship · Check-in',
+  [UserRole.DEPT_HOD]: 'Head of Department',
+  [UserRole.DEPT_MEMBER]: 'Department team',
 };
 
 const ADMIN_DEPTS: { to: string; label: string; icon: React.ElementType; bg: string; fg: string }[] = [
@@ -210,6 +224,7 @@ export const ADMIN_DEPT_VIEWS: { prefix: string; key: string; label: string; rol
   { prefix: '/children', key: 'children', label: 'Children’s Church', role: UserRole.CHILDREN_HOD },
   { prefix: '/campuses', key: 'campuses', label: 'Campuses', role: UserRole.CAMPUS_HOD },
   { prefix: '/discipleship', key: 'discipleship', label: 'Discipleship', role: UserRole.DISCIPLESHIP_HOD },
+  { prefix: '/dept', key: 'dept', label: 'Department', role: UserRole.DEPT_HOD },
 ];
 
 /** Screens opened from More / Inspect: own back arrow, no greeting header, no bottom bar on phones. */
@@ -230,17 +245,22 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
   // The church Administrator inside a department sees that department's own navigation.
   const adminDept =
     user.role === UserRole.ADMIN ? ADMIN_DEPT_VIEWS.find((d) => pathname === d.prefix || pathname.startsWith(d.prefix + '/')) : undefined;
-  const navItems = adminDept
-    ? getNavItemsForRole(adminDept.role)
-    : getNavItemsForRole(user.role).filter((item) => !(user.role === UserRole.PLATFORM_ADMIN && item.to === '/admin/overview' && !tenant));
+  // A church's own department: its id comes from the address (Administrator) or the login (head / team).
+  const customDeptId = adminDept?.key === 'dept' ? pathname.split('/')[2] ?? '' : user.departmentId ?? '';
+  const customDept = adminDept?.key === 'dept' || user.role === UserRole.DEPT_HOD || user.role === UserRole.DEPT_MEMBER ? DepartmentService.getDepartmentById(customDeptId) : null;
+  const navItems = (
+    adminDept
+      ? getNavItemsForRole(adminDept.role)
+      : getNavItemsForRole(user.role).filter((item) => !(user.role === UserRole.PLATFORM_ADMIN && item.to === '/admin/overview' && !tenant))
+  ).map((item) => (item.to.includes(':dept') ? { ...item, to: item.to.replace(':dept', customDeptId) } : item));
   const subPage = !adminDept && SUB_PAGE.test(pathname);
-  const backToInspect = () => adminDept && navigate(`/admin/inspect/${adminDept.key}`);
+  const backToInspect = () => adminDept && navigate(`/admin/inspect/${adminDept.key === 'dept' ? customDeptId : adminDept.key}`);
   // Admin pages opened from More (Subscription, tools) keep the More tab highlighted.
   const moreAlias = (to: string) => to === '/admin/more' && /^\/admin\/(subscription|tools)/.test(pathname);
   // Step-by-step flows take the whole phone screen: no greeting header, no tab bar (desktop keeps the sidebar).
   const focusFlow = /^\/platform\/tenants\/new/.test(pathname);
   const showTabBar = navItems.length > 1 && !focusFlow && !subPage;
-  const deptLabel = adminDept ? adminDept.label : (DEPT_LABEL[user.role] ?? ROLE_LABELS[user.role]);
+  const deptLabel = customDept ? customDept.name : adminDept ? adminDept.label : (DEPT_LABEL[user.role] ?? ROLE_LABELS[user.role]);
 
   const signOut = () => {
     setSwitcherOpen(false);
@@ -360,11 +380,11 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
         <header className={`${focusFlow || subPage ? 'hidden' : 'md:hidden'} sticky top-0 z-20 bg-church-canvas/90 backdrop-blur-xl px-5 pt-[max(14px,env(safe-area-inset-top))] pb-2.5 flex flex-wrap items-center gap-3`}>
           {adminDept ? (
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${adminDept.label}`} className="w-11 h-11 shrink-0 rounded-[14px] bg-white flex items-center justify-center oc-press">
+              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${deptLabel}`} className="w-11 h-11 shrink-0 rounded-[14px] bg-white flex items-center justify-center oc-press">
                 <ChevronLeft className="w-5 h-5" />
               </button>
               <span className="min-w-0 flex flex-col gap-0.5">
-                <span className="font-display text-lg font-bold leading-tight truncate">{adminDept.label}</span>
+                <span className="font-display text-lg font-bold leading-tight truncate">{deptLabel}</span>
                 <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-church-emerald">
                   <ShieldCheck className="w-3.5 h-3.5" /> Administrator access
                 </span>
@@ -388,11 +408,11 @@ export const ResponsiveShell: React.FC<{ children: React.ReactNode }> = ({ child
         <div className="hidden md:flex items-center justify-between gap-3 px-10 pt-6">
           {adminDept ? (
             <div className="flex items-center gap-3 min-w-0">
-              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${adminDept.label}`} className="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center oc-press">
+              <button type="button" onClick={backToInspect} aria-label={`Back to inspect ${deptLabel}`} className="w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center oc-press">
                 <ChevronLeft className="w-[18px] h-[18px]" />
               </button>
               <span className="flex flex-col">
-                <span className="font-display text-[17px] font-bold leading-tight">{adminDept.label}</span>
+                <span className="font-display text-[17px] font-bold leading-tight">{deptLabel}</span>
                 <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-church-emerald">
                   <ShieldCheck className="w-3.5 h-3.5" /> Administrator access
                 </span>

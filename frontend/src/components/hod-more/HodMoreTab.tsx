@@ -126,15 +126,16 @@ const DEPT_EXTRAS: Partial<Record<DepartmentCode, Extra[]>> = {
   ],
 };
 
-export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
+export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode; /** For a church's own (custom) departments. */ departmentId?: string }> = ({
   departmentCode,
+  departmentId,
 }) => {
   useChurchStoreRefresh();
   const { user, tenant, activeTenantId, logout } = useAuth();
   const navigate = useNavigate();
   const currency = tenant?.currency || 'UGX';
 
-  const [section, setSection] = useState<MoreSection | null>(null);
+  const [section, setSection] = useState<MoreSection | null>(() => (new URLSearchParams(window.location.search).get('section') as MoreSection | null) || null);
   const [teamView, setTeamView] = useState(() => new URLSearchParams(window.location.search).get('view') === 'team');
   const [reqSheetOpen, setReqSheetOpen] = useState(false);
   const [wpSheetOpen, setWpSheetOpen] = useState(false);
@@ -152,7 +153,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
     );
   }
 
-  const department = DepartmentService.getDepartmentByCode(activeTenantId, departmentCode);
+  const department = departmentId ? DepartmentService.getDepartmentById(departmentId) : DepartmentService.getDepartmentByCode(activeTenantId, departmentCode);
   const deptId = department?.id || '';
 
   const requisitions = DepartmentService.getRequisitions(activeTenantId, deptId);
@@ -346,7 +347,7 @@ export const HodMoreTab: React.FC<{ departmentCode: DepartmentCode }> = ({
     .filter(Boolean) as string[];
 
   if (teamView) {
-    return <DepartmentTeamView departmentCode={departmentCode} onBack={() => setTeamView(false)} />;
+    return <DepartmentTeamView departmentCode={departmentCode} departmentId={departmentId} onBack={() => setTeamView(false)} />;
   }
 
   return (

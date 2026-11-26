@@ -31,6 +31,7 @@ const LOGIN_ROLE: Record<string, { hod: UserRole; member: UserRole }> = {
   [DepartmentCode.CHILDRENS_CHURCH]: { hod: UserRole.CHILDREN_HOD, member: UserRole.CHILDREN_WORKER },
   [DepartmentCode.CAMPUSES]: { hod: UserRole.CAMPUS_HOD, member: UserRole.CAMPUS_LEADER },
   [DepartmentCode.DISCIPLESHIP]: { hod: UserRole.DISCIPLESHIP_HOD, member: UserRole.DISCIPLESHIP_MEMBER },
+  [DepartmentCode.CUSTOM]: { hod: UserRole.DEPT_HOD, member: UserRole.DEPT_MEMBER },
 };
 
 const prettyPhone = (p: string) => p.replace(/^\+?256(\d{3})(\d{3})(\d{3})$/, '+256 $1 $2 $3');
@@ -48,14 +49,15 @@ export interface DutySessions {
   attendancePct: (memberId: string) => number;
 }
 
-export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; onBack?: () => void; duty?: DutySessions }> = ({
+export const DepartmentTeamView: React.FC<{ departmentCode: DepartmentCode; departmentId?: string; onBack?: () => void; duty?: DutySessions }> = ({
   departmentCode,
+  departmentId,
   onBack,
   duty,
 }) => {
   useChurchStoreRefresh();
   const { user, activeTenantId } = useAuth();
-  const dept = DepartmentService.getDepartmentByCode(activeTenantId, departmentCode);
+  const dept = departmentId ? DepartmentService.getDepartmentById(departmentId) : DepartmentService.getDepartmentByCode(activeTenantId, departmentCode);
   const deptName = DEPT_SHORT[departmentCode] ?? dept?.name ?? '';
 
   const services = AttendanceAndMemberService.getServices(activeTenantId);

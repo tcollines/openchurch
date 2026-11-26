@@ -59,12 +59,13 @@ const TILE: Record<TileTone, [string, string]> = {
   green: ['#DDF1E4', '#0E5A37'],
 };
 
-export const Tile: React.FC<{ icon: React.ElementType; tone?: TileTone; size?: number }> = ({
+export const Tile: React.FC<{ icon: React.ElementType; tone?: TileTone; size?: number; /** Exact colours, e.g. a church's own department. */ colors?: [string, string] }> = ({
   icon: Icon,
   tone = 'neutral',
   size = 40,
+  colors,
 }) => {
-  const [bg, fg] = TILE[tone];
+  const [bg, fg] = colors ?? TILE[tone];
   return (
     <span
       aria-hidden="true"
@@ -247,8 +248,8 @@ export const DarkCard: React.FC<{
 );
 
 /** Three little stat boxes inside a DarkCard. */
-export const DarkStats: React.FC<{ items: { label: string; value: React.ReactNode; accent?: boolean }[] }> = ({ items }) => (
-  <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+export const DarkStats: React.FC<{ items: { label: string; value: React.ReactNode; accent?: boolean }[]; /** Columns; defaults to one per item. */ cols?: number }> = ({ items, cols }) => (
+  <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols ?? items.length}, minmax(0, 1fr))` }}>
     {items.map((it) => (
       <div key={it.label} className="rounded-[14px] bg-white/[0.07] px-3 py-2.5 flex flex-col gap-0.5 min-w-0">
         <span className="text-xs text-church-mist truncate">{it.label}</span>

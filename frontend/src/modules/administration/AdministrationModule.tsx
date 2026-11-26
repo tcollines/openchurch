@@ -28,6 +28,7 @@ import {
   Users,
   Wallet,
   BookOpen,
+  Plus,
 } from 'lucide-react';
 import {
   Avatar,
@@ -77,6 +78,8 @@ import { INSPECT_KEY_BY_CODE } from './insights';
 import { SoulsSummaryCard } from '@/modules/tele-pastoring/SoulsWon';
 import { RejectSheet } from './RejectSheet';
 import { BudgetCard } from './BudgetCard';
+import { AddDepartmentSheet } from './AddDepartmentSheet';
+import { customDeptLook } from '@/shared/deptLook';
 import { churchContributions, churchRequests, ChurchProfilePage, ContributionsPage, InspectDepartmentPage, RequestsPage, teamAttendance, TeamAttendancePage } from './AdminTools';
 
 /* ── shared bits ─────────────────────────────────────────────── */
@@ -122,6 +125,8 @@ const AdminOverviewTab: React.FC = () => {
   const navigate = useNavigate();
   const currency = tenant?.currency || 'UGX';
   const subState = SubscriptionService.getState(tenant);
+  const [addingDept, setAddingDept] = useState(false);
+  const customDepts = DepartmentService.getCustomDepartments(activeTenantId);
 
   const trend = AttendanceAndMemberService.getAttendancePercentageTrend(activeTenantId, 5);
   const members = AttendanceAndMemberService.getMembers(activeTenantId);
@@ -276,7 +281,34 @@ const AdminOverviewTab: React.FC = () => {
             </button>
           );
         })}
+        {customDepts.map((d) => {
+          const l = customDeptLook(d);
+          return (
+            <button key={d.id} type="button" onClick={() => navigate(`/admin/inspect/${d.id}`)} className="oc-press text-left flex flex-col gap-3 p-4 rounded-[20px] bg-white">
+              <Tile icon={l.icon} colors={[l.bg, l.fg]} size={36} />
+              <span className="text-[15px] font-semibold truncate">{d.name}</span>
+            </button>
+          );
+        })}
+        {user?.role === UserRole.ADMIN && (
+          <button
+            type="button"
+            onClick={() => setAddingDept(true)}
+            className="oc-press flex flex-col items-center justify-center gap-1.5 p-4 rounded-[20px] border-[1.5px] border-dashed border-church-border text-church-text min-h-[104px]"
+          >
+            <Plus className="w-[22px] h-[22px]" />
+            <span className="text-[15px] font-semibold">Add a department</span>
+          </button>
+        )}
       </div>
+      <AddDepartmentSheet
+        open={addingDept}
+        onClose={() => setAddingDept(false)}
+        onAdded={(d) => {
+          setAddingDept(false);
+          navigate(`/admin/inspect/${d.id}`);
+        }}
+      />
     </div>
   );
 
